@@ -54,7 +54,7 @@ jobs:
           grep -q 'MOBILE_REAL_UNDER_1S_V5' public/app.js
           grep -q 'MOBILE_REAL_UNDER_1S_V5' templates/plaza-mobile-page.txt
           grep -q 'STRICT_P95_DASHBOARD_BATCH_V4' cloudflare/services/student-dashboard.js
-          grep -Fq 'requestAnimationFrame(() => { setTimeout(startPlazaPrefetch, 0); });' public/app.js
+          grep -Fq 'void startPlazaPrefetch();' public/app.js
           grep -Fq "preload.fetchPriority = index < 2 ? 'high' : 'auto';" public/app.js
           if grep -Fq "fetch('/api/plaza?sort=latest&page=1&limit=20'" public/bootstrap.js; then
             echo '登录/首页启动脚本仍在关键路径直接请求活动广场。'
