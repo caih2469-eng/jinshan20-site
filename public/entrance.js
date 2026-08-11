@@ -31,6 +31,8 @@
                 button.disabled = true;
                 button.textContent = '登录中';
                 loginError.textContent = '';
+                // Warm the authenticated landing document alongside login, never during entrance first paint.
+                window.__START_HOME_DOCUMENT_PREFETCH__?.();
                 const controller = new AbortController();
                 const timeout = setTimeout(() => controller.abort(), 10000);
                 try {

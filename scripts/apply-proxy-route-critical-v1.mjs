@@ -37,6 +37,7 @@ if (!entrance.source.includes(marker)) {
     '      let request = Promise.resolve();',
     '      let settled = true;',
     '      const start = () => {',
+    '        if (controller) return;',
     '        controller = new AbortController();',
     '        settled = false;',
     '        const timeout = setTimeout(() => controller.abort(), 1200);',
@@ -45,7 +46,10 @@ if (!entrance.source.includes(marker)) {
     '          .catch(() => null)',
     '          .finally(() => { settled = true; clearTimeout(timeout); });',
     '      };',
-    "      addEventListener('load', () => setTimeout(start, 0), { once: true });",
+    "      addEventListener('input', start, { once: true, capture: true });",
+    "      addEventListener('pointerdown', start, { once: true, capture: true });",
+    "      addEventListener('load', () => setTimeout(start, 1500), { once: true });",
+    '      window.__START_HOME_DOCUMENT_PREFETCH__ = start;',
     '      window.__SETTLE_HOME_DOCUMENT_PREFETCH__ = async () => {',
     '        if (controller && !settled) controller.abort();',
     '        await request;',
@@ -61,7 +65,9 @@ const html = read('public/entrance.html').source;
 if (!html.includes(marker)
     || !html.includes('HOME_DOCUMENT_PREFETCH_V2')
     || !html.includes("controller.abort(), 1200")
-    || !html.includes("addEventListener('load', () => setTimeout(start, 0)")
+    || !html.includes("addEventListener('input', start")
+    || !html.includes("addEventListener('load', () => setTimeout(start, 1500)")
+    || !html.includes('__START_HOME_DOCUMENT_PREFETCH__')
     || !html.includes('response.arrayBuffer()')
     || !html.includes('__SETTLE_HOME_DOCUMENT_PREFETCH__')
     || !html.includes("loginForm.addEventListener('submit'")

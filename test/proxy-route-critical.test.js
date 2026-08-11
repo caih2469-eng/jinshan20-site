@@ -10,8 +10,11 @@ test('入口页合并登录运行时并短时复用首页文档，不改变登�
   assert.match(html, /INLINE_ENTRANCE_CRITICAL_V1/);
   assert.match(html, /HOME_DOCUMENT_PREFETCH_V2/);
   assert.match(html, /controller\.abort\(\), 1200/);
-  assert.match(html, /addEventListener\('load', \(\) => setTimeout\(start, 0\)/);
+  assert.match(html, /addEventListener\('input', start/);
+  assert.match(html, /addEventListener\('pointerdown', start/);
+  assert.match(html, /addEventListener\('load', \(\) => setTimeout\(start, 1500\)/);
   assert.match(html, /response\.arrayBuffer\(\)/);
+  assert.match(html, /__START_HOME_DOCUMENT_PREFETCH__/);
   assert.match(html, /__SETTLE_HOME_DOCUMENT_PREFETCH__/);
   assert.doesNotMatch(html, /<link rel="prefetch" href="\/">/);
   assert.match(html, /loginForm\.addEventListener\('submit'/);
@@ -19,6 +22,7 @@ test('入口页合并登录运行时并短时复用首页文档，不改变登�
   assert.match(html, /location\.replace\('\/'\)/);
   assert.doesNotMatch(html, /<script[^>]+src="[^"]*\/entrance\.js/i);
   assert.match(runtime, /STRICT_P95_LOGIN_READY_V4/);
+  assert.match(runtime, /window\.__START_HOME_DOCUMENT_PREFETCH__\?\.\(\)/);
   assert.match(runtime, /await window\.__SETTLE_HOME_DOCUMENT_PREFETCH__\?\.\(\)/);
   assert.match(headers, /\/\r?\n\s+Cache-Control: public, max-age=5, must-revalidate/);
   assert.match(headers, /\/index\.html\r?\n\s+Cache-Control: public, max-age=5, must-revalidate/);
