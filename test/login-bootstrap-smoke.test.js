@@ -23,7 +23,7 @@ test('登录首页V2交接仅作为短时同用户加速，原session网络链�
   assert.match(worker, /login_password/);
   assert.match(worker, /login_dashboard/);
   assert.match(worker, /login_session/);
-  assert.match(worker, /const \[token, dashboard\] = await Promise\.all/);
+  assert.match(worker, /const \[token, dashboard, plaza\] = await Promise\.all/);
   assert.match(worker, /'set-cookie': `session_token=/);
   assert.match(worker, /bootstrap\n  \}, 200, \{/);
 
