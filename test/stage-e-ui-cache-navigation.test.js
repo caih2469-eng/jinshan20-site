@@ -46,6 +46,7 @@ test('阶段E：广场首屏复用启动预取并提升未降质的首图传输�
   assert.match(plazaBlock, /const preloadedResult = firstPagePromise/);
   assert.match(appSource, /2048w/);
   assert.match(appSource, /preload\.fetchPriority = index < 2 \? 'high' : 'auto'/);
+  assert.match(appSource, /preloadLink\.dataset\.plazaFirstThumbPreload = 'true'/);
 });
 
 test('阶段E：广场详情主体优先显示，评论与浏览计数均不阻塞，独立页面通过历史记录返回列表', () => {
