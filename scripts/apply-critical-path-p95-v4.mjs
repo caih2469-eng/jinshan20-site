@@ -132,7 +132,8 @@ const plazaWarmupReady = v5Ready
   : app.includes("requestIdleCallback(startPlazaPrefetch, { timeout: 900 })")
     && app.includes("priority: 'low'");
 if (!entranceHtml.includes(entranceHtmlMarker)
-    || !entranceHtml.includes('<script defer src=')
+    || (!entranceHtml.includes('<script defer src=')
+      && !entranceHtml.includes('INLINE_ENTRANCE_CRITICAL_V1'))
     || !entranceHtml.includes('.ui-layer { opacity: 1 !important;')
     || !entrance.includes(entranceMarker)
     || !bootstrap.includes(bootstrapMarker)

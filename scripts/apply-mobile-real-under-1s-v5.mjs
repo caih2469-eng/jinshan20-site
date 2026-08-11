@@ -134,5 +134,6 @@ await import('./finalize-checkin-settings-v1.mjs');
 await import('./finalize-plaza-detail-page-v1.mjs');
 await import('./apply-plaza-under-1s-and-member-image-limit-v1.mjs');
 await import('./apply-login-plaza-handoff-v1.mjs');
+await import('./apply-proxy-route-critical-v1.mjs');
 
-console.log('Applied mobile real-under-1s V5: login Plaza handoff, immediate warmup, authoritative check-in settings, 960px card-first rendering and deferred 2048px display warmup.');
+console.log('Applied mobile real-under-1s V5: proxy-route critical merge, login Plaza handoff, immediate warmup, authoritative check-in settings, 960px card-first rendering and deferred 2048px display warmup.');

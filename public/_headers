@@ -1,8 +1,8 @@
 /
-  Cache-Control: no-cache, no-store, must-revalidate
+  Cache-Control: public, max-age=5, must-revalidate
 
 /index.html
-  Cache-Control: no-cache, no-store, must-revalidate
+  Cache-Control: public, max-age=5, must-revalidate
 
 /entrance
   Cache-Control: no-cache, no-store, must-revalidate

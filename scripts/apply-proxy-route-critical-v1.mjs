@@ -1,0 +1,49 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
+const root = process.cwd();
+const marker = 'INLINE_ENTRANCE_CRITICAL_V1';
+const read = (relativePath) => {
+  const file = path.join(root, relativePath);
+  if (!fs.existsSync(file)) throw new Error(`${relativePath}不存在`);
+  return { file, source: fs.readFileSync(file, 'utf8') };
+};
+const write = (file, source) => fs.writeFileSync(file, source, 'utf8');
+
+const entrance = read('public/entrance.html');
+if (!entrance.source.includes(marker)) {
+  const runtime = read('public/entrance.js').source;
+  const scriptPattern = /\s*<script defer src="([^"]*\/entrance\.js[^"]*)"><\/script>/;
+  const scriptMatch = entrance.source.match(scriptPattern);
+  if (!scriptMatch) throw new Error('未找到最终入口页外部脚本，已停止以避免误改');
+  if (!runtime.includes('STRICT_P95_LOGIN_READY_V4')
+      || !runtime.includes("loginForm.addEventListener('submit'")) {
+    throw new Error('入口页关键登录逻辑尚未生成完整');
+  }
+  const inlineRuntime = runtime.replace(/<\/script/gi, '<\\/script');
+  const inline = [
+    '',
+    `  <!-- ${marker} source=${scriptMatch[1]} -->`,
+    '  <script>',
+    inlineRuntime,
+    '  </script>'
+  ].join('\n');
+  let next = entrance.source.replace(scriptPattern, inline);
+  next = next.replace(
+    '</head>',
+    '    <!-- HOME_DOCUMENT_PREFETCH_V1 -->\n    <link rel="prefetch" href="/">\n</head>'
+  );
+  write(entrance.file, next);
+}
+
+const html = read('public/entrance.html').source;
+if (!html.includes(marker)
+    || !html.includes('HOME_DOCUMENT_PREFETCH_V1')
+    || !html.includes('<link rel="prefetch" href="/">')
+    || !html.includes("loginForm.addEventListener('submit'")
+    || !html.includes('STRICT_P95_LOGIN_READY_V4')
+    || /<script[^>]+src="[^"]*\/entrance\.js/i.test(html)) {
+  throw new Error('代理线路入口页关键请求合并生成不完整');
+}
+
+console.log('Applied proxy-route critical path: inline login runtime and five-second reusable home-document prefetch.');
