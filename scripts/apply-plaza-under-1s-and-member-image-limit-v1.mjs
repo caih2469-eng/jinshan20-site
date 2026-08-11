@@ -39,10 +39,14 @@ const replaceOnce = (source, search, replacement, label) => {
   const { file, source } = read('public/app.js');
   if (!source.includes(marker)) {
     let next = source;
-    next = replaceOnce(next,
-      `  const bootstrapResult = safeSort === 'latest' && page === 1 && !safeQuery\n    ? await Promise.resolve(window.__BOOTSTRAP_PLAZA_PROMISE__).catch(() => null)\n    : null;\n  const result = bootstrapResult || await api(path);`,
-      `  // Reuse the bootstrap/home prefetch instead of issuing a second D1 request when the\n  // user enters Plaza immediately after the home screen becomes interactive.\n  const firstPagePromise = safeSort === 'latest' && page === 1 && !safeQuery\n    ? (studentPlazaPrefetchPromise || prefetchStudentPlaza())\n    : null;\n  const preloadedResult = firstPagePromise\n    ? await Promise.resolve(firstPagePromise).catch(() => null)\n    : null;\n  const result = preloadedResult || await api(path);`,
-      'Plaza first-page prefetch reuse');
+    const replacement = `  // Reuse the bootstrap/home prefetch instead of issuing a second D1 request when the\n  // user enters Plaza immediately after the home screen becomes interactive.\n  const firstPagePromise = safeSort === 'latest' && page === 1 && !safeQuery\n    ? (studentPlazaPrefetchPromise || prefetchStudentPlaza())\n    : null;\n  const preloadedResult = firstPagePromise\n    ? await Promise.resolve(firstPagePromise).catch(() => null)\n    : null;\n  const result = preloadedResult || await api(path);`;
+    const bootstrapBlock = `  const bootstrapResult = safeSort === 'latest' && page === 1 && !safeQuery\n    ? await Promise.resolve(window.__BOOTSTRAP_PLAZA_PROMISE__).catch(() => null)\n    : null;\n  const result = bootstrapResult || await api(path);`;
+    const directBlock = `  const result = await api(path);\n  writeViewCache(plazaViewCache, cacheKey, result);\n  renderPlazaPage(result, safeSort, page, '', pageEpoch, { query: safeQuery });`;
+    if (next.includes(bootstrapBlock)) {
+      next = replaceOnce(next, bootstrapBlock, replacement, 'Plaza bootstrap result');
+    } else {
+      next = replaceOnce(next, directBlock, `${replacement}\n  writeViewCache(plazaViewCache, cacheKey, result);\n  renderPlazaPage(result, safeSort, page, '', pageEpoch, { query: safeQuery });`, 'Plaza direct result');
+    }
     if (!next.includes('PICA_THUMB_MAX_EDGE = 960') || !next.includes('PICA_DISPLAY_MAX_EDGE = 2048')) {
       throw new Error('Image-quality limits are missing; aborting generation.');
     }
