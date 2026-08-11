@@ -25,9 +25,6 @@ const patchPlazaPage = (source, label) => {
     `/* PLAZA_PERFORMANCE_QUALITY_V3 */\n${marker}`
   );
 
-  // Plaza cards are two-column mobile tiles. A 960px WebP thumbnail is already
-  // retina-sharp for this surface; offering the 2048px display variant here lets
-  // high-DPR phones spend the first-second budget on an unnecessarily large file.
   const eagerResponsive = [
     `              ${'${'}cardIndex < 4`,
     `                ? \`src="${'${'}escapeHtml(post.images[0].thumbUrl || post.images[0].imageUrl)}" srcset="${'${'}escapeHtml(post.images[0].thumbUrl || post.images[0].imageUrl)} 960w, ${'${'}escapeHtml(post.images[0].displayUrl || post.images[0].imageUrl)} 2048w" sizes="(max-width: 720px) calc(50vw - 18px), 360px"\``,
@@ -89,9 +86,6 @@ const patchPlazaPage = (source, label) => {
   next = replaceIfPresent(next, oneLowPriorityThumb, fourThumbWarmup);
   next = next.replace('        hasFirstImage: Boolean(firstUrl),', '        hasFirstImage: Boolean(preloadImages.length),');
 
-  // Preserve the 960/2048 responsive detail markup for quality and full-screen use,
-  // but stop eager 2048px background downloads from competing with the first-second
-  // card/detail-visible path. The high-resolution files warm only after idle/timeout.
   const eagerDisplayWarmup = [
     '  post.images.slice(0, 2).forEach((image, imageIndex) => {',
     '    const displayUrl = buildMediaUrl(image.displayUrl || image.imageUrl || image.thumbUrl);',
@@ -134,5 +128,7 @@ const patchPlazaPage = (source, label) => {
   if (!next.includes(marker)) throw new Error('活动广场模板V5标记缺失');
   write(file, next);
 }
+
+await import('./apply-checkin-window-upload-plaza-page-v1.mjs');
 
 console.log('Applied mobile real-under-1s V5: immediate post-paint Plaza warmup, 960px card-first rendering and deferred 2048px display warmup.');
