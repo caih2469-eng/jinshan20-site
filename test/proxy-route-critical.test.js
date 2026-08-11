@@ -10,6 +10,7 @@ test('入口页合并登录运行时并短时复用首页文档，不改变登�
   assert.match(html, /INLINE_ENTRANCE_CRITICAL_V1/);
   assert.match(html, /HOME_DOCUMENT_PREFETCH_V2/);
   assert.match(html, /controller\.abort\(\), 1200/);
+  assert.match(html, /addEventListener\('load', \(\) => setTimeout\(start, 0\)/);
   assert.match(html, /response\.arrayBuffer\(\)/);
   assert.match(html, /__SETTLE_HOME_DOCUMENT_PREFETCH__/);
   assert.doesNotMatch(html, /<link rel="prefetch" href="\/">/);

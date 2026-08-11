@@ -33,15 +33,21 @@ if (!entrance.source.includes(marker)) {
     '    <!-- HOME_DOCUMENT_PREFETCH_V2: bounded cache warmup; never reuse a stalled request -->',
     '    <script>',
     '    (() => {',
-    '      const controller = new AbortController();',
-    '      let settled = false;',
-    '      const timeout = setTimeout(() => controller.abort(), 1200);',
-    "      const request = fetch('/', { credentials: 'same-origin', cache: 'default', signal: controller.signal })",
-    '        .then((response) => response.ok ? response.arrayBuffer() : null)',
-    '        .catch(() => null)',
-    '        .finally(() => { settled = true; clearTimeout(timeout); });',
+    '      let controller = null;',
+    '      let request = Promise.resolve();',
+    '      let settled = true;',
+    '      const start = () => {',
+    '        controller = new AbortController();',
+    '        settled = false;',
+    '        const timeout = setTimeout(() => controller.abort(), 1200);',
+    "        request = fetch('/', { credentials: 'same-origin', cache: 'default', signal: controller.signal })",
+    '          .then((response) => response.ok ? response.arrayBuffer() : null)',
+    '          .catch(() => null)',
+    '          .finally(() => { settled = true; clearTimeout(timeout); });',
+    '      };',
+    "      addEventListener('load', () => setTimeout(start, 0), { once: true });",
     '      window.__SETTLE_HOME_DOCUMENT_PREFETCH__ = async () => {',
-    '        if (!settled) controller.abort();',
+    '        if (controller && !settled) controller.abort();',
     '        await request;',
     '      };',
     '    })();',
@@ -55,6 +61,7 @@ const html = read('public/entrance.html').source;
 if (!html.includes(marker)
     || !html.includes('HOME_DOCUMENT_PREFETCH_V2')
     || !html.includes("controller.abort(), 1200")
+    || !html.includes("addEventListener('load', () => setTimeout(start, 0)")
     || !html.includes('response.arrayBuffer()')
     || !html.includes('__SETTLE_HOME_DOCUMENT_PREFETCH__')
     || !html.includes("loginForm.addEventListener('submit'")
