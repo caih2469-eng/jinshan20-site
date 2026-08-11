@@ -83,10 +83,11 @@ test('fresh plaza cache renders first and delays refresh so images keep the crit
   assert.match(plazaPageTemplate, /setTimeout\(\(\) => \{ void refresh\(\); \}, 3200\)/);
 });
 
-test('authenticated home starts 960px Plaza warmup after first paint and reuses the in-flight promise', () => {
+test('authenticated home consumes the login Plaza handoff or starts 960px warmup and reuses the in-flight promise', () => {
   assert.match(bootstrap, /PLAZA_PERFORMANCE_QUALITY_V3/);
   assert.match(bootstrap, /STRICT_P95_BOOTSTRAP_V4/);
-  assert.match(bootstrap, /window\.__BOOTSTRAP_PLAZA_PROMISE__ = Promise\.resolve\(null\)/);
+  assert.match(bootstrap, /LOGIN_PLAZA_HANDOFF_V1/);
+  assert.match(bootstrap, /window\.__BOOTSTRAP_PLAZA_PROMISE__ = Promise\.resolve\(session\.plaza \|\| null\)/);
   assert.match(bootstrap, /window\.__BOOTSTRAP_PLAZA_IMAGES__ = \[\]/);
   assert.doesNotMatch(bootstrap, /fetch\('\/api\/plaza\?sort=latest&page=1&limit=20'/);
   assert.match(app, /STRICT_P95_APP_PREFETCH_V4/);
