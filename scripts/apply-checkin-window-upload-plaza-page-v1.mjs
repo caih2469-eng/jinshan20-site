@@ -111,18 +111,16 @@ export const applyInteractionCheckinSettings = (task, config) => {
         '  mapWithConcurrency,\n  submissionImagesForIds,\n  applyInteractionCheckinSettings',
         'student helper import');
     }
-    const start = next.indexOf('  const memberMatch = route.match');
-    const end = start >= 0 ? nextTopLevel(next, start + 1) : -1;
-    if (start < 0 || end < 0) throw new Error('未找到个人打卡路由边界');
-    let member = next.slice(start, end);
-    if (!member.includes('const effectiveTask = applyInteractionCheckinSettings(task, taskConfig);')) {
-      member = replaceOnce(member,
+    if (!next.includes('const effectiveTask = applyInteractionCheckinSettings(task, taskConfig);')) {
+      next = replaceOnce(next,
         "    if (!task || task.status !== 'published' || task.trackId !== 'interaction') return json({ error: '任务不存在' }, 404);\n    const body = await readJson(request);",
         "    if (!task || task.status !== 'published' || task.trackId !== 'interaction') return json({ error: '任务不存在' }, 404);\n    const taskConfig = await readConfig(env);\n    const effectiveTask = applyInteractionCheckinSettings(task, taskConfig);\n    const body = await readJson(request);",
         'member effective task');
     }
-    member = member.replaceAll('taskWindowOpen(task, occurrenceDate', 'taskWindowOpen(effectiveTask, occurrenceDate');
-    next = next.slice(0, start) + member + next.slice(end);
+    next = next.replaceAll(
+      'taskWindowOpen(task, occurrenceDate, makeupAllowed)',
+      'taskWindowOpen(effectiveTask, occurrenceDate, makeupAllowed)'
+    );
     write(file, marker + '\n' + next);
   }
 }
@@ -270,16 +268,13 @@ window.addEventListener('popstate', (event) => {
   const student = read('cloudflare/routes/student.js').source;
   const media = read('cloudflare/routes/media.js').source;
   const app = read('public/app.js').source;
-  const s0 = student.indexOf('  const memberMatch = route.match');
-  const s1 = s0 >= 0 ? nextTopLevel(student, s0 + 1) : -1;
-  const member = student.slice(s0, s1);
   const m0 = media.indexOf('const memberFastUpload = async');
   const m1 = m0 >= 0 ? nextTopLevel(media, m0 + 1) : -1;
   const fast = media.slice(m0, m1);
   const d0 = app.indexOf('async function openPlazaPost');
   const d1 = d0 >= 0 ? nextTopLevel(app, d0 + 1) : -1;
   const detail = app.slice(d0, d1);
-  if (!member.includes('taskWindowOpen(effectiveTask, occurrenceDate')
+  if (!student.includes('taskWindowOpen(effectiveTask, occurrenceDate, makeupAllowed)')
       || !fast.includes('const [task, team, taskConfig] = await Promise.all([')
       || !fast.includes('taskWindowOpen(effectiveTask, occurrenceDate')
       || !app.includes("recordPerf('member-checkin-direct-ready'")
