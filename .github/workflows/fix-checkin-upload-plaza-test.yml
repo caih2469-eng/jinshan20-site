@@ -46,6 +46,8 @@ jobs:
           grep -q 'CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1' public/app.js
           grep -q 'CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1' cloudflare/routes/student.js
           grep -q 'CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1' cloudflare/routes/media.js
+          grep -q 'FINAL_CHECKIN_SETTINGS_V1' cloudflare/services/student-dashboard.js
+          grep -q 'checkinSettingsConfigured' cloudflare/lib/runtime.js
           grep -q 'plaza-detail-page' public/app.js
           if grep -Fq '<div class="modal-backdrop"><section class="card modal plaza-detail' public/app.js; then
             echo '活动广场详情仍在使用浮窗。'
@@ -58,17 +60,60 @@ jobs:
           set -euo pipefail
           node scripts/apply-checkin-service-split.mjs
           grep -q 'CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1' cloudflare/routes/student.js
+          grep -q 'FINAL_CHECKIN_SETTINGS_V1' cloudflare/services/student-dashboard.js
+          grep -q 'checkinSettingsConfigured' cloudflare/lib/runtime.js
           grep -q 'taskWindowOpen(effectiveTask, occurrenceDate' cloudflare/routes/student.js
           grep -q 'taskWindowOpen(effectiveTask, occurrenceDate' cloudflare/routes/media.js
           cd cloudflare/checkin-service
           pnpm exec wrangler deploy --dry-run --config wrangler.test.jsonc
 
       - name: Deploy isolated check-in Worker to TEST
-        working-directory: cloudflare/checkin-service
+        shell: bash
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: pnpm exec wrangler deploy --config wrangler.test.jsonc
+        run: |
+          set -euo pipefail
+          deploy_log="$RUNNER_TEMP/checkin-test-deploy.log"
+          set +e
+          (
+            cd cloudflare/checkin-service
+            pnpm exec wrangler deploy --config wrangler.test.jsonc
+          ) 2>&1 | tee "$deploy_log"
+          deploy_status=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$deploy_status" -eq 0 ]; then
+            echo 'Existing TEST Check-in Worker deployed with its preserved secret.'
+            exit 0
+          fi
+
+          if ! grep -Fq 'MEDIA_SIGNING_SECRET' "$deploy_log"; then
+            echo 'Check-in Worker deployment failed for a reason unrelated to the required media signing secret.'
+            exit "$deploy_status"
+          fi
+
+          echo 'TEST Check-in Worker has no usable media signing secret; initializing TEST-only aligned secrets.'
+          secret_file="$RUNNER_TEMP/checkin-test-secrets.json"
+          export CHECKIN_TEST_SECRET_FILE="$secret_file"
+          umask 077
+          node <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const secret = crypto.randomBytes(48).toString('base64url');
+          fs.writeFileSync(process.env.CHECKIN_TEST_SECRET_FILE, JSON.stringify({ MEDIA_SIGNING_SECRET: secret }));
+          NODE
+
+          (
+            cd cloudflare/checkin-service
+            pnpm exec wrangler deploy --config wrangler.test.jsonc --secrets-file "$secret_file"
+          )
+          (
+            cd cloudflare/pages-test
+            pnpm exec wrangler pages secret bulk "$secret_file" --project-name jinshan20-test
+          )
+          rm -f "$secret_file"
+          echo 'TEST Worker and TEST Pages now share the same newly initialized media signing secret.'
 
       - name: Stamp exact TEST commit
         shell: bash
@@ -96,7 +141,8 @@ jobs:
             if printf '%s' "$version" | grep -Fq "\"commit\": \"$GITHUB_SHA\"" \
               && curl -fsS --connect-timeout 8 --max-time 15 -H 'Cache-Control: no-cache' -D "$health_headers" "$health_url" -o "$health_body" \
               && grep -Eqi '^x-jinshan-service:[[:space:]]*checkin[[:space:]]*$' "$health_headers" \
-              && grep -Fq '"ok":true' "$health_body"; then
+              && grep -Fq '"ok":true' "$health_body" \
+              && grep -Fq '"mediaSigningAligned":true' "$health_body"; then
               echo "TEST Pages + checkin-v1 verified at $GITHUB_SHA"
               cat "$health_body"
               exit 0
