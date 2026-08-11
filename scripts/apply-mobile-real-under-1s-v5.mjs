@@ -113,7 +113,7 @@ const patchPlazaPage = (source, label) => {
   next = replaceIfPresent(next, eagerDisplayWarmup, deferredDisplayWarmup);
 
   if (!next.includes(marker)
-      || !next.includes('requestAnimationFrame(() => { setTimeout(startPlazaPrefetch, 0); });')
+      || !next.includes('void startPlazaPrefetch();')
       || !next.includes("preload.fetchPriority = index < 2 ? 'high' : 'auto';")
       || !next.includes("preload.fetchPriority = 'low';")
       || !next.includes('2048w')) {
