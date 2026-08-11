@@ -80,15 +80,6 @@ const patchPlazaPage = (source, label) => {
     '        const preload = new Image();',
     "        preload.decoding = 'async';",
     "        preload.fetchPriority = index < 2 ? 'high' : 'auto';",
-    "        if (index === 0 && !document.head.querySelector('link[data-plaza-first-thumb-preload]')) {",
-    "          const preloadLink = document.createElement('link');",
-    "          preloadLink.rel = 'preload';",
-    "          preloadLink.as = 'image';",
-    "          preloadLink.fetchPriority = 'high';",
-    "          preloadLink.dataset.plazaFirstThumbPreload = 'true';",
-    '          preloadLink.href = thumbUrl;',
-    '          document.head.appendChild(preloadLink);',
-    '        }',
     '        preload.src = thumbUrl;',
     '      });'
   ].join('\n');
@@ -124,7 +115,6 @@ const patchPlazaPage = (source, label) => {
   if (!next.includes(marker)
       || !next.includes('void startPlazaPrefetch();')
       || !next.includes("preload.fetchPriority = index < 2 ? 'high' : 'auto';")
-      || !next.includes("preloadLink.dataset.plazaFirstThumbPreload = 'true';")
       || !next.includes("preload.fetchPriority = 'low';")
       || !next.includes('2048w')) {
     throw new Error('主应用V5活动广场运行时生成不完整');
