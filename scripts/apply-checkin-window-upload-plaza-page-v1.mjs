@@ -175,11 +175,12 @@ export const applyInteractionCheckinSettings = (task, config) => {
 
 {
   const { file, source } = read('public/app.js');
-  if (!source.includes(marker)) {
-    let next = source;
-    next = transformDecl(next, 'const compressMemberCheckinImage = async', (section) => {
-      if (section.includes('member-checkin-direct-ready')) return section + '\n// direct-ready-present';
-      return replaceOnce(section,
+  let next = source;
+
+  if (!next.includes("recordPerf('member-checkin-direct-ready'")) {
+    const compressAnchor = 'const compressMemberCheckinImage = async';
+    if (next.includes(compressAnchor)) {
+      next = transformDecl(next, compressAnchor, (section) => replaceOnce(section,
         '  const sourceFile = await normalizeSourceImage(file);\n  const imageCompression = await loadImageCompressionLibrary();',
         `  const sourceFile = await normalizeSourceImage(file);
   const sourceDimensions = await imageDimensions(sourceFile);
@@ -191,21 +192,23 @@ export const applyInteractionCheckinSettings = (task, config) => {
     return { file: sourceFile, mimeType: sourceFile.type, width: sourceDimensions.width, height: sourceDimensions.height };
   }
   const imageCompression = await loadImageCompressionLibrary();`,
-        'member direct ready');
-    }, 'compressMemberCheckinImage');
+        'member direct ready'), 'compressMemberCheckinImage');
+    }
+  }
 
-    const warmAnchor = '  requestAnimationFrame(() => { setTimeout(startPlazaPrefetch, 0); });';
-    if (!next.includes('memberUploadWarmup')) {
-      next = replaceOnce(next, warmAnchor,
-        `${warmAnchor}
+  const warmAnchor = '  requestAnimationFrame(() => { setTimeout(startPlazaPrefetch, 0); });';
+  if (!next.includes('memberUploadWarmup') && next.includes(warmAnchor)) {
+    next = replaceOnce(next, warmAnchor,
+      `${warmAnchor}
   setTimeout(() => {
     const memberUploadWarmup = () => { void loadImageCompressionLibrary().catch(() => {}); };
     if ('requestIdleCallback' in window) requestIdleCallback(memberUploadWarmup, { timeout: 700 });
     else memberUploadWarmup();
   }, 1100);`,
-        'member upload warmup');
-    }
+      'member upload warmup');
+  }
 
+  if (!next.includes('plaza-detail-page') && next.includes('async function openPlazaPost')) {
     next = transformDecl(next, 'async function openPlazaPost', (section) => {
       let changed = replaceOnce(section,
         "  const root = document.querySelector('#modalRoot');\n  if (!root) return;",
@@ -233,9 +236,10 @@ export const applyInteractionCheckinSettings = (task, config) => {
       changed = changed.replaceAll('id="closePost">关闭</button>', 'id="closePost">返回</button>');
       return changed;
     }, 'openPlazaPost');
+  }
 
-    if (!next.includes('const restorePlazaListFromHistory = (state) => {')) {
-      const helper = `${marker}
+  if (!next.includes('const restorePlazaListFromHistory = (state) => {') && next.includes('async function openPlazaPost')) {
+    const helper = `${marker}
 const restorePlazaListFromHistory = (state) => {
   if (!state?.plazaList) return false;
   document.body.dataset.view = 'plaza';
@@ -250,11 +254,11 @@ window.addEventListener('popstate', (event) => {
 });
 
 `;
-      next = replaceOnce(next, 'async function openPlazaPost', helper + 'async function openPlazaPost', 'plaza history helper');
-    }
-    if (!next.includes(marker)) next = marker + '\n' + next;
-    write(file, next);
+    next = replaceOnce(next, 'async function openPlazaPost', helper + 'async function openPlazaPost', 'plaza history helper');
   }
+
+  if (!next.includes(marker)) next = marker + '\n' + next;
+  if (next !== source) write(file, next);
 }
 
 {
@@ -273,15 +277,14 @@ window.addEventListener('popstate', (event) => {
   const fast = media.slice(m0, m1);
   const d0 = app.indexOf('async function openPlazaPost');
   const d1 = d0 >= 0 ? nextTopLevel(app, d0 + 1) : -1;
-  const detail = app.slice(d0, d1);
+  const detail = d0 >= 0 ? app.slice(d0, d1 > d0 ? d1 : undefined) : '';
+  const hasV5 = app.includes('MOBILE_REAL_UNDER_1S_V5');
   if (!student.includes('taskWindowOpen(effectiveTask, occurrenceDate, makeupAllowed)')
       || !fast.includes('const [task, team, taskConfig] = await Promise.all([')
       || !fast.includes('taskWindowOpen(effectiveTask, occurrenceDate')
-      || !app.includes("recordPerf('member-checkin-direct-ready'")
-      || !app.includes('memberUploadWarmup')
-      || !detail.includes('const root = app;')
-      || !detail.includes('plaza-detail-page')
-      || detail.includes('modal-backdrop')) {
+      || (app.includes('const compressMemberCheckinImage = async') && !app.includes("recordPerf('member-checkin-direct-ready'"))
+      || (hasV5 && !app.includes('memberUploadWarmup'))
+      || (d0 >= 0 && (!detail.includes('const root = app;') || !detail.includes('plaza-detail-page') || detail.includes('modal-backdrop')))) {
     throw new Error('V1修复生成不完整');
   }
 }
