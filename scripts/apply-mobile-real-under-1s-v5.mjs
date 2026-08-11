@@ -132,5 +132,6 @@ const patchPlazaPage = (source, label) => {
 await import('./apply-checkin-window-upload-plaza-page-v1.mjs');
 await import('./finalize-checkin-settings-v1.mjs');
 await import('./finalize-plaza-detail-page-v1.mjs');
+await import('./apply-plaza-under-1s-and-member-image-limit-v1.mjs');
 
 console.log('Applied mobile real-under-1s V5: immediate post-paint Plaza warmup, authoritative check-in settings, 960px card-first rendering and deferred 2048px display warmup.');

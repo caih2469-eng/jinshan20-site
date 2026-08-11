@@ -40,6 +40,15 @@ test('阶段E：学生从新鲜广场缓存即时渲染，后台刷新延后避�
   assert.doesNotMatch(plazaBlock, /cacheIsFresh\(cached\)\) queueMicrotask/);
 });
 
+test('阶段E：广场首屏复用启动预取并提升未降质的首图传输优先级', () => {
+  const plazaBlock = sourceBetween('async function plaza', 'const renderAdminCommentsPage');
+  assert.match(plazaBlock, /studentPlazaPrefetchPromise \|\| prefetchStudentPlaza\(\)/);
+  assert.match(plazaBlock, /const preloadedResult = firstPagePromise/);
+  assert.match(appSource, /PICA_THUMB_MAX_EDGE = 960/);
+  assert.match(appSource, /PICA_DISPLAY_MAX_EDGE = 2048/);
+  assert.match(appSource, /preload\.fetchPriority = index < 2 \? 'high' : 'auto'/);
+});
+
 test('阶段E：广场详情主体优先显示，评论与浏览计数均不阻塞，独立页面通过历史记录返回列表', () => {
   const block = sourceBetween('async function openPlazaPost', 'const renderAdminCommentsPage');
   assert.match(block, /let commentsPromise = null;/);

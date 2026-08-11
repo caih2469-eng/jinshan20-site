@@ -22,6 +22,7 @@ test('student home keeps only the requested shortcuts and a working history moda
 
 test('member check-in respects the administrator image limit and submits all confirmed media ids', () => {
   const app = read('public/app.js');
+  const studentRoute = read('cloudflare/routes/student.js');
   const memberBody = app.match(/function memberCheckinForm\(task\) \{([\s\S]*?)\n}\n\nfunction materialSubmissionForm/)?.[1] || '';
   assert.match(memberBody, /Number\(task\.memberImageLimit \|\| task\.imageLimit\)/);
   assert.match(memberBody, /multiple required/);
@@ -29,6 +30,8 @@ test('member check-in respects the administrator image limit and submits all con
   assert.match(memberBody, /session\?\.items\?\.map\(\(item\) => item\.mediaId\)/);
   assert.match(memberBody, /occurrenceDate: task\.occurrenceDate,[\s\S]*mediaIds/);
   assert.doesNotMatch(memberBody, /files\?\.\[0\]/);
+  assert.match(studentRoute, /Number\(effectiveTask\.memberImageLimit \|\| effectiveTask\.imageLimit\)/);
+  assert.match(studentRoute, /claimConfirmedMedia\([\s\S]*'member-checkin',[\s\S]*imageLimit/);
 });
 
 test('interaction history and member check-in backend support multiple media objects without a schema migration', () => {

@@ -101,9 +101,11 @@ test('authenticated home starts 960px Plaza warmup after first paint and reuses 
   assert.ok(prefetchStart >= 0, '缺少活动广场首页预取函数');
   const prefetch = app.slice(prefetchStart, prefetchEnd > prefetchStart ? prefetchEnd : undefined);
   assert.doesNotMatch(prefetch, /srcset|2048w/);
-  assert.match(app, /const bootstrapResult = safeSort === 'latest' && page === 1 && !safeQuery/);
+  assert.match(app, /const firstPagePromise = safeSort === 'latest' && page === 1 && !safeQuery/);
+  assert.match(app, /studentPlazaPrefetchPromise \|\| prefetchStudentPlaza\(\)/);
+  assert.match(app, /const preloadedResult = firstPagePromise/);
   assert.match(app, /window\.__BOOTSTRAP_PLAZA_PROMISE__/);
-  assert.match(app, /const result = bootstrapResult \|\| await api\(path\)/);
+  assert.match(app, /const result = preloadedResult \|\| await api\(path\)/);
   assert.match(plazaPageTemplate, /window\.__BOOTSTRAP_PLAZA_PROMISE__/);
 });
 
