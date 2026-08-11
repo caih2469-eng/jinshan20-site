@@ -96,7 +96,7 @@ const assertStrictRuntime = () => {
     throw new Error('最终构建仍在登录/首页启动关键路径直接请求活动广场');
   }
   const app = fs.readFileSync(path.join(root, 'public/app.js'), 'utf8');
-  if (!app.includes('requestAnimationFrame(() => { setTimeout(startPlazaPrefetch, 0); });')) {
+  if (!app.includes('void startPlazaPrefetch();')) {
     throw new Error('最终构建没有在首页首帧后立即启动广场预热');
   }
   if (!app.includes("preload.fetchPriority = index < 2 ? 'high' : 'auto';")) {

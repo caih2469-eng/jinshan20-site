@@ -127,7 +127,7 @@ const app = fs.readFileSync(path.join(root, 'public/app.js'), 'utf8');
 const dashboard = fs.readFileSync(path.join(root, 'cloudflare/services/student-dashboard.js'), 'utf8');
 const v5Ready = app.includes('MOBILE_REAL_UNDER_1S_V5');
 const plazaWarmupReady = v5Ready
-  ? app.includes('requestAnimationFrame(() => { setTimeout(startPlazaPrefetch, 0); });')
+  ? app.includes('void startPlazaPrefetch();')
     && app.includes("preload.fetchPriority = index < 2 ? 'high' : 'auto';")
   : app.includes("requestIdleCallback(startPlazaPrefetch, { timeout: 900 })")
     && app.includes("priority: 'low'");

@@ -196,7 +196,7 @@ export const applyInteractionCheckinSettings = (task, config) => {
     }
   }
 
-  const warmAnchor = '  requestAnimationFrame(() => { setTimeout(startPlazaPrefetch, 0); });';
+  const warmAnchor = '  void startPlazaPrefetch();';
   if (!next.includes('memberUploadWarmup') && next.includes(warmAnchor)) {
     next = replaceOnce(next, warmAnchor,
       `${warmAnchor}
