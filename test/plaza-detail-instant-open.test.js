@@ -90,7 +90,7 @@ test('authenticated home starts 960px Plaza warmup after first paint and reuses 
   assert.match(bootstrap, /window\.__BOOTSTRAP_PLAZA_IMAGES__ = \[\]/);
   assert.doesNotMatch(bootstrap, /fetch\('\/api\/plaza\?sort=latest&page=1&limit=20'/);
   assert.match(app, /STRICT_P95_APP_PREFETCH_V4/);
-  assert.match(app, /requestAnimationFrame\(\(\) => \{ setTimeout\(startPlazaPrefetch, 0\); \}\)/);
+  assert.match(app, /void startPlazaPrefetch\(\);/);
   assert.doesNotMatch(app, /requestIdleCallback\(startPlazaPrefetch/);
   assert.doesNotMatch(app, /setTimeout\(startPlazaPrefetch, 500\)/);
   assert.match(app, /window\.__BOOTSTRAP_PLAZA_PROMISE__ = studentPlazaPrefetchPromise/);

@@ -54,8 +54,8 @@ const patchPlazaPage = (source, label) => {
     '  /* STRICT_P95_APP_PREFETCH_V4 */',
     `  ${marker}`,
     '  const startPlazaPrefetch = () => { void prefetchStudentPlaza(); };',
-    '  // Paint the authenticated home first, then warm the smallest useful Plaza payload immediately.',
-    '  requestAnimationFrame(() => { setTimeout(startPlazaPrefetch, 0); });'
+    '  // Start the lightweight Plaza request alongside home rendering so an immediate tap reuses it.',
+    '  void startPlazaPrefetch();'
   ].join('\n');
   next = replaceIfPresent(next, deferredPrefetch, immediateAfterPaint);
 
