@@ -29,7 +29,7 @@ test('独立打卡服务与主站统一使用后台四校区打卡设置', async
   ]);
   const today = shanghaiDate();
   const currentTime = shanghaiTime();
-  const weekday = new Date(`${today}T12:00:00+08:00`).getUTCDay() || 7;
+  const allWeekdays = [1, 2, 3, 4, 5, 6, 7];
   const closedWindow = currentTime < '12:00'
     ? { dailyStart: '23:58', dailyEnd: '23:59' }
     : { dailyStart: '00:00', dailyEnd: '00:01' };
@@ -43,7 +43,7 @@ test('独立打卡服务与主站统一使用后台四校区打卡设置', async
       scheduleType: 'weekly',
       activeStartDate: today,
       activeEndDate: today,
-      weekdays: [weekday],
+      weekdays: allWeekdays,
       refreshDays: [],
       ...closedWindow
     })
@@ -58,7 +58,7 @@ test('独立打卡服务与主站统一使用后台四校区打卡设置', async
       activeEndDate: today,
       dailyStart: '00:00',
       dailyEnd: '23:59',
-      weekdays: [weekday],
+      weekdays: allWeekdays,
       personalImageLimit: 1,
       teamImageLimit: 3
     }
@@ -95,6 +95,7 @@ test('活动广场查看详情改为全页面导航且不再使用详情浮窗',
   assert.match(detail, /id="closePost">返回<\/button>/);
   assert.doesNotMatch(detail, /modal-backdrop/);
   assert.doesNotMatch(detail, /card modal plaza-detail/);
+  assert.doesNotMatch(detail, /<\/section><\/div>`/);
   assert.match(app, /restorePlazaListFromHistory/);
   assert.match(style, /\.plaza-detail-page/);
   assert.match(detail, /2048w/);
@@ -105,6 +106,7 @@ test('修复层在V5和独立Check-in Worker部署链最后执行', () => {
   const checkinSplit = read('scripts/apply-checkin-service-split.mjs');
   const fixWorkflow = read('.github/workflows/fix-checkin-upload-plaza-test.yml');
   assert.match(v5, /await import\('\.\/apply-checkin-window-upload-plaza-page-v1\.mjs'\)/);
+  assert.match(v5, /await import\('\.\/finalize-plaza-detail-page-v1\.mjs'\)/);
   assert.match(checkinSplit, /await import\('\.\/apply-checkin-window-upload-plaza-page-v1\.mjs'\)/);
   assert.match(fixWorkflow, /--runs 20 --threshold-ms 1000/);
   assert.match(fixWorkflow, /api\/checkin-service-health/);
