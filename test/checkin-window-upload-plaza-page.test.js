@@ -19,9 +19,7 @@ test('独立打卡服务与主站统一使用后台四校区打卡设置', async
   assert.match(runtime, /CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1/);
   assert.match(runtime, /checkinSettings:\s*\{/);
   assert.match(dashboard, /applyInteractionCheckinSettings/);
-  const memberStart = student.indexOf('  const memberMatch = route.match');
-  const memberEnd = student.indexOf('  const submissionMatch = route.match', memberStart);
-  const member = student.slice(memberStart, memberEnd);
+  const member = topLevelSection(student, '  const memberMatch = route.match');
   assert.match(member, /const effectiveTask = applyInteractionCheckinSettings\(task, taskConfig\)/);
   assert.match(member, /taskWindowOpen\(effectiveTask, occurrenceDate/);
   assert.doesNotMatch(member, /taskWindowOpen\(task, occurrenceDate/);
