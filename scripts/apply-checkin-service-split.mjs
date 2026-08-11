@@ -169,4 +169,6 @@ if (!route.includes(routeMarker)
   throw new Error('打卡独立服务生成不完整');
 }
 
-console.log('Applied check-in service binding with safe local fallback and per-request signing proof.');
+await import('./apply-checkin-window-upload-plaza-page-v1.mjs');
+
+console.log('Applied check-in service binding with safe local fallback, per-request signing proof and aligned live check-in settings.');
