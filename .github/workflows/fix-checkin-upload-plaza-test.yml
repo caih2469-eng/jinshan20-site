@@ -1,0 +1,136 @@
+name: Check-in bugfix and mobile UX test
+
+on:
+  push:
+    branches:
+      - fix/checkin-window-upload-plaza-page-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checkin-upload-plaza-fix-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TEST_BASE_URL: https://jinshan20-test.pages.dev
+
+jobs:
+  validate-deploy-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Full static and functional validation
+        run: |
+          pnpm run check
+          pnpm run check:text
+          pnpm test
+
+      - name: Generate exact bugfix test build
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/apply-build-asset-version.mjs
+          node scripts/apply-mobile-real-under-1s-v5.mjs
+          grep -q 'CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1' public/app.js
+          grep -q 'CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1' cloudflare/routes/student.js
+          grep -q 'CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1' cloudflare/routes/media.js
+          grep -q 'plaza-detail-page' public/app.js
+          if grep -Fq '<div class="modal-backdrop"><section class="card modal plaza-detail' public/app.js; then
+            echo '活动广场详情仍在使用浮窗。'
+            exit 1
+          fi
+
+      - name: Prepare and validate isolated check-in Worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/apply-checkin-service-split.mjs
+          grep -q 'CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1' cloudflare/routes/student.js
+          grep -q 'taskWindowOpen(effectiveTask, occurrenceDate' cloudflare/routes/student.js
+          grep -q 'taskWindowOpen(effectiveTask, occurrenceDate' cloudflare/routes/media.js
+          cd cloudflare/checkin-service
+          pnpm exec wrangler deploy --dry-run --config wrangler.test.jsonc
+
+      - name: Deploy isolated check-in Worker to TEST
+        working-directory: cloudflare/checkin-service
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm exec wrangler deploy --config wrangler.test.jsonc
+
+      - name: Stamp exact TEST commit
+        shell: bash
+        run: |
+          node -e "const fs=require('fs');fs.writeFileSync('public/deployment-version.json',JSON.stringify({commit:process.env.GITHUB_SHA,runId:process.env.GITHUB_RUN_ID,assetVersion:process.env.GITHUB_SHA,environment:'test-checkin-fix',generatedAt:new Date().toISOString()},null,2)+'\n')"
+
+      - name: Deploy exact bugfix commit to TEST Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: cloudflare/pages-test
+          command: pages deploy ../../public --project-name jinshan20-test --branch develop
+
+      - name: Verify TEST serves exact commit and aligned check-in service
+        shell: bash
+        run: |
+          set -euo pipefail
+          version_url="${TEST_BASE_URL}/deployment-version.json?fix=${GITHUB_RUN_ID}"
+          health_url="${TEST_BASE_URL}/api/checkin-service-health?fix=${GITHUB_RUN_ID}"
+          for attempt in $(seq 1 45); do
+            version="$(curl -fsS --connect-timeout 8 --max-time 15 -H 'Cache-Control: no-cache' "$version_url" || true)"
+            health_headers="$(mktemp)"
+            health_body="$(mktemp)"
+            if printf '%s' "$version" | grep -Fq "\"commit\": \"$GITHUB_SHA\"" \
+              && curl -fsS --connect-timeout 8 --max-time 15 -H 'Cache-Control: no-cache' -D "$health_headers" "$health_url" -o "$health_body" \
+              && grep -Eqi '^x-jinshan-service:[[:space:]]*checkin[[:space:]]*$' "$health_headers" \
+              && grep -Fq '"ok":true' "$health_body"; then
+              echo "TEST Pages + checkin-v1 verified at $GITHUB_SHA"
+              cat "$health_body"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo 'TEST environment did not converge to the exact bugfix commit/check-in service.'
+          exit 1
+
+      - name: Seed browser fixture
+        continue-on-error: true
+        run: node scripts/browser-approved-preview.mjs --base-url "$TEST_BASE_URL"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Run strict 20-run Chrome p95 gate
+        run: node scripts/browser-strict-p95.mjs --base-url "$TEST_BASE_URL" --runs 20 --threshold-ms 1000
+
+      - name: Run cold-cache Plaza image quality gate
+        run: node scripts/browser-plaza-mobile-preview.mjs --base-url "$TEST_BASE_URL"
+
+      - name: Upload strict report
+        if: always() && hashFiles('reports/browser-strict-p95.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkin-fix-strict-p95-${{ github.run_id }}
+          path: reports/browser-strict-p95.json
+          retention-days: 14
+
+      - name: Upload cold-cache report
+        if: always() && hashFiles('reports/browser-plaza-mobile-preview.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkin-fix-plaza-cold-${{ github.run_id }}
+          path: reports/browser-plaza-mobile-preview.json
+          retention-days: 14
