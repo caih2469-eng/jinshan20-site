@@ -3,6 +3,7 @@ import path from 'node:path';
 
 const file = path.resolve('cloudflare/services/student-dashboard.js');
 const marker = '/* FINAL_CHECKIN_SETTINGS_V1 */';
+const dashboardV4Marker = '/* STRICT_P95_DASHBOARD_BATCH_V4 */';
 let source = fs.readFileSync(file, 'utf8');
 
 const canonicalHelper = `${marker}
@@ -53,9 +54,13 @@ const nextExportAfter = (from) => {
 };
 
 if (helperStart >= 0) {
-  const helperEnd = nextExportAfter(helperStart + helperAnchor.length);
+  let helperEnd = nextExportAfter(helperStart + helperAnchor.length);
   if (helperEnd < 0 || helperEnd <= helperStart) {
     throw new Error('无法识别四校区打卡设置帮助函数的独立边界');
+  }
+  const preservedDashboardMarker = source.indexOf(dashboardV4Marker, helperStart + helperAnchor.length);
+  if (preservedDashboardMarker > helperStart && preservedDashboardMarker < helperEnd) {
+    helperEnd = preservedDashboardMarker;
   }
   let replaceStart = helperStart;
   const prefixWithMarker = `${marker}\n`;
@@ -76,11 +81,11 @@ if (!source.includes("task?.checkinEnabled === false")) {
 
 const finalMarkerStart = source.indexOf(marker);
 const finalHelperStart = source.indexOf(helperAnchor, finalMarkerStart);
-const finalHelperEnd = (() => {
-  const pattern = /^export const [A-Za-z_$][\w$]*\s*=/gm;
-  pattern.lastIndex = finalHelperStart + helperAnchor.length;
-  return pattern.exec(source)?.index ?? -1;
-})();
+let finalHelperEnd = nextExportAfter(finalHelperStart + helperAnchor.length);
+const finalDashboardMarker = source.indexOf(dashboardV4Marker, finalHelperStart + helperAnchor.length);
+if (finalDashboardMarker > finalHelperStart && finalDashboardMarker < finalHelperEnd) {
+  finalHelperEnd = finalDashboardMarker;
+}
 if (finalMarkerStart < 0 || finalHelperStart < 0 || finalHelperEnd < 0) {
   throw new Error('最终四校区打卡设置帮助函数边界不完整');
 }
@@ -96,6 +101,9 @@ for (const required of [
 ]) {
   if (!finalHelper.includes(required)) throw new Error(`最终四校区打卡设置缺少：${required}`);
 }
+if (source.includes('buildStudentTeamContext') && !source.includes(dashboardV4Marker)) {
+  throw new Error('检测到Dashboard V4共享上下文但marker丢失，拒绝继续');
+}
 
 fs.writeFileSync(file, source, 'utf8');
-console.log('Finalized authoritative interaction check-in settings without disturbing later Dashboard V4 declarations.');
+console.log('Finalized authoritative interaction check-in settings while preserving Dashboard V4 marker and helpers.');
