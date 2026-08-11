@@ -19,10 +19,9 @@ test('独立打卡服务与主站统一使用后台四校区打卡设置', async
   assert.match(runtime, /CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1/);
   assert.match(runtime, /checkinSettings:\s*\{/);
   assert.match(dashboard, /applyInteractionCheckinSettings/);
-  const member = topLevelSection(student, '  const memberMatch = route.match');
-  assert.match(member, /const effectiveTask = applyInteractionCheckinSettings\(task, taskConfig\)/);
-  assert.match(member, /taskWindowOpen\(effectiveTask, occurrenceDate/);
-  assert.doesNotMatch(member, /taskWindowOpen\(task, occurrenceDate/);
+  assert.match(student, /const effectiveTask = applyInteractionCheckinSettings\(task, taskConfig\)/);
+  assert.match(student, /taskWindowOpen\(effectiveTask, occurrenceDate, makeupAllowed\)/);
+  assert.doesNotMatch(student, /taskWindowOpen\(task, occurrenceDate, makeupAllowed\)/);
 
   const [{ applyInteractionCheckinSettings, taskWindowOpen }, { shanghaiDate, shanghaiTime }] = await Promise.all([
     import('../cloudflare/services/student-dashboard.js'),
