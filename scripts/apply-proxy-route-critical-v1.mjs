@@ -29,21 +29,38 @@ if (!entrance.source.includes(marker)) {
     '  </script>'
   ].join('\n');
   let next = entrance.source.replace(scriptPattern, inline);
-  next = next.replace(
-    '</head>',
-    '    <!-- HOME_DOCUMENT_PREFETCH_V1 -->\n    <link rel="prefetch" href="/">\n</head>'
-  );
+  const homePrefetch = [
+    '    <!-- HOME_DOCUMENT_PREFETCH_V2: bounded cache warmup; never reuse a stalled request -->',
+    '    <script>',
+    '    (() => {',
+    '      const controller = new AbortController();',
+    '      let settled = false;',
+    '      const timeout = setTimeout(() => controller.abort(), 1200);',
+    "      const request = fetch('/', { credentials: 'same-origin', cache: 'default', signal: controller.signal })",
+    '        .then((response) => response.ok ? response.arrayBuffer() : null)',
+    '        .catch(() => null)',
+    '        .finally(() => { settled = true; clearTimeout(timeout); });',
+    '      window.__SETTLE_HOME_DOCUMENT_PREFETCH__ = async () => {',
+    '        if (!settled) controller.abort();',
+    '        await request;',
+    '      };',
+    '    })();',
+    '    </script>'
+  ].join('\n');
+  next = next.replace('</head>', `${homePrefetch}\n</head>`);
   write(entrance.file, next);
 }
 
 const html = read('public/entrance.html').source;
 if (!html.includes(marker)
-    || !html.includes('HOME_DOCUMENT_PREFETCH_V1')
-    || !html.includes('<link rel="prefetch" href="/">')
+    || !html.includes('HOME_DOCUMENT_PREFETCH_V2')
+    || !html.includes("controller.abort(), 1200")
+    || !html.includes('response.arrayBuffer()')
+    || !html.includes('__SETTLE_HOME_DOCUMENT_PREFETCH__')
     || !html.includes("loginForm.addEventListener('submit'")
     || !html.includes('STRICT_P95_LOGIN_READY_V4')
     || /<script[^>]+src="[^"]*\/entrance\.js/i.test(html)) {
   throw new Error('代理线路入口页关键请求合并生成不完整');
 }
 
-console.log('Applied proxy-route critical path: inline login runtime and five-second reusable home-document prefetch.');
+console.log('Applied proxy-route critical path: inline login runtime and bounded reusable home-document prefetch.');

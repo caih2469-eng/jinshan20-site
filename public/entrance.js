@@ -49,6 +49,8 @@
                     } catch {
                         // Login still works through the HttpOnly cookie in restricted WebViews.
                     }
+                    // A stalled speculative home request must never hold the real navigation open.
+                    await window.__SETTLE_HOME_DOCUMENT_PREFETCH__?.();
                     location.replace('/');
                 } catch (error) {
                     loginError.textContent = error.name === 'AbortError' ? '登录请求超时，请检查网络后重试。' : error.message;
