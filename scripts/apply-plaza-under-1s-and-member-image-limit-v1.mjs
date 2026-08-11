@@ -37,8 +37,11 @@ const replaceOnce = (source, search, replacement, label) => {
 
 {
   const { file, source } = read('public/app.js');
-  if (!source.includes(marker)) {
-    let next = source;
+  let next = source;
+  const hasPrefetchReuse = next.includes('studentPlazaPrefetchPromise || prefetchStudentPlaza()')
+    && next.includes('const preloadedResult = firstPagePromise');
+  if (!next.includes(marker)) next = `${marker}\n${next}`;
+  if (!hasPrefetchReuse) {
     const replacement = `  // Reuse the bootstrap/home prefetch instead of issuing a second D1 request when the\n  // user enters Plaza immediately after the home screen becomes interactive.\n  const firstPagePromise = safeSort === 'latest' && page === 1 && !safeQuery\n    ? (studentPlazaPrefetchPromise || prefetchStudentPlaza())\n    : null;\n  const preloadedResult = firstPagePromise\n    ? await Promise.resolve(firstPagePromise).catch(() => null)\n    : null;\n  const result = preloadedResult || await api(path);`;
     const bootstrapBlock = `  const bootstrapResult = safeSort === 'latest' && page === 1 && !safeQuery\n    ? await Promise.resolve(window.__BOOTSTRAP_PLAZA_PROMISE__).catch(() => null)\n    : null;\n  const result = bootstrapResult || await api(path);`;
     const directResult = /  const result = await api\(path\);\n(?=  writeViewCache\(plazaViewCache, cacheKey, result\);)/;
@@ -55,11 +58,11 @@ const replaceOnce = (source, search, replacement, label) => {
       }
       next = `${beforePlaza}${plazaSection.replace(directResult, replacement)}${afterPlaza}`;
     }
-    if (!next.includes('2048w')) {
-      throw new Error('The 2048w detail-image quality contract is missing; aborting generation.');
-    }
-    write(file, `${marker}\n${next}`);
   }
+  if (!next.includes('2048w')) {
+    throw new Error('The 2048w detail-image quality contract is missing; aborting generation.');
+  }
+  if (next !== source) write(file, next);
 }
 
 for (const [relative, required] of [
