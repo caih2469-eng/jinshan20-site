@@ -23,7 +23,7 @@ test('独立打卡服务与主站统一使用后台四校区打卡设置', async
   assert.match(student, /taskWindowOpen\(effectiveTask, occurrenceDate, makeupAllowed\)/);
   assert.doesNotMatch(student, /taskWindowOpen\(task, occurrenceDate, makeupAllowed\)/);
 
-  const [{ applyInteractionCheckinSettings, taskWindowOpen }, { shanghaiDate, shanghaiTime }] = await Promise.all([
+  const [{ applyInteractionCheckinSettings, isTaskOccurrence, taskWindowOpen }, { shanghaiDate, shanghaiTime }] = await Promise.all([
     import('../cloudflare/services/student-dashboard.js'),
     import('../cloudflare/lib/runtime.js')
   ]);
@@ -63,7 +63,19 @@ test('独立打卡服务与主站统一使用后台四校区打卡设置', async
       teamImageLimit: 3
     }
   });
-  assert.equal(taskWindowOpen(effective, today, false), true, '后台最新开放时段必须覆盖旧任务schedule_json');
+  const effectiveSchedule = JSON.parse(effective.scheduleJson);
+  assert.equal(effective.checkinEnabled, true, `打卡开关异常：${JSON.stringify(effective)}`);
+  assert.equal(effectiveSchedule.activeStartDate, today, `开始日期未覆盖：${JSON.stringify(effectiveSchedule)}`);
+  assert.equal(effectiveSchedule.activeEndDate, today, `结束日期未覆盖：${JSON.stringify(effectiveSchedule)}`);
+  assert.equal(effectiveSchedule.dailyStart, '00:00', `开始时间未覆盖：${JSON.stringify(effectiveSchedule)}`);
+  assert.equal(effectiveSchedule.dailyEnd, '23:59', `结束时间未覆盖：${JSON.stringify(effectiveSchedule)}`);
+  assert.deepEqual(effectiveSchedule.weekdays, allWeekdays, `星期未覆盖：${JSON.stringify(effectiveSchedule)}`);
+  assert.equal(isTaskOccurrence(effective, today), true,
+    `后台新日期/星期仍被判关闭：today=${today}, now=${currentTime}, schedule=${JSON.stringify(effectiveSchedule)}`);
+  assert.equal(currentTime >= effectiveSchedule.dailyStart && currentTime <= effectiveSchedule.dailyEnd, true,
+    `上海当前时间不在测试开放窗口：now=${currentTime}, schedule=${JSON.stringify(effectiveSchedule)}`);
+  assert.equal(taskWindowOpen(effective, today, false), true,
+    `后台最新开放时段仍未覆盖旧任务：today=${today}, now=${currentTime}, effective=${JSON.stringify(effective)}`);
 });
 
 test('个人打卡fast上传并行读取任务队伍设置并保留960px/300KB规格', () => {
