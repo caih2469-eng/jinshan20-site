@@ -40,7 +40,7 @@ test('阶段E：学生从新鲜广场缓存即时渲染，后台刷新延后避�
   assert.doesNotMatch(plazaBlock, /cacheIsFresh\(cached\)\) queueMicrotask/);
 });
 
-test('阶段E：广场详情主体优先显示，评论与浏览计数均不阻塞，关闭不重新请求列表', () => {
+test('阶段E：广场详情主体优先显示，评论与浏览计数均不阻塞，独立页面通过历史记录返回列表', () => {
   const block = sourceBetween('async function openPlazaPost', 'const renderAdminCommentsPage');
   assert.match(block, /let commentsPromise = null;/);
   assert.match(block, /commentsPromise = api\(`/);
@@ -56,10 +56,14 @@ test('阶段E：广场详情主体优先显示，评论与浏览计数均不阻�
   assert.match(block, /void api\(`\/api\/plaza\/\$\{postId\}\/view`/);
   assert.doesNotMatch(block, /await api\(`\/api\/plaza\/\$\{postId\}\/view`/);
   assert.match(block, /countedPlazaViews\.has\(viewKey\)/);
-  assert.match(block, /root\.innerHTML = '';/);
-  assert.match(block, /window\.scrollTo\(0, plazaScrollY\)/);
+  assert.match(block, /const root = app;/);
+  assert.match(block, /history\.pushState/);
+  assert.match(block, /history\.back\(\)/);
+  assert.doesNotMatch(block, /modal-backdrop/);
   const closeBlock = block.slice(block.indexOf('const closePost'), block.indexOf('root.querySelector', block.indexOf('const closePost')));
   assert.doesNotMatch(closeBlock, /\bplaza\s*\(/);
+  assert.match(appSource, /const restorePlazaListFromHistory = \(state\) => \{/);
+  assert.match(appSource, /window\.scrollTo\(0, scrollY\)/);
 });
 
 test('阶段E：学生成功操作局部更新、轻提示并后台刷新，不直接重载首页', () => {
