@@ -245,3 +245,12 @@ npm run backfill:plaza-thumbs -- --apply
 Android 微信、Android QQ、Android Chrome、iPhone 微信、iPhone QQ 和
 iPhone Safari 均没有真实设备记录，统一判定：**未通过**。详细执行表见
 `docs/MANUAL_DEVICE_TEST_CHECKLIST.md`。
+
+## 2026-08-12 严格 Linux Chrome 验收
+
+- 功能代码基线：`697c984e86f32667cb80db116edba49d06d8f842`；后续仅补充本验收记录。
+- 静态与功能回归：194/194 通过；UTF-8 文本审计 0 项违规。
+- 本机 Ubuntu、Google Chrome 151、Fast-4G、20 次冷启动：入口 p95 972.1ms，登录到首页 p95 429.7ms，首页到活动广场 p95 568.5ms，活动广场到详情 p95 22.6ms，严格门禁通过。
+- GitHub Ubuntu、Google Chrome、Fast-4G、20 次冷启动：入口 p95 375.0ms，登录到首页 p95 775.9ms，首页到活动广场 p95 280.1ms，活动广场到详情 p95 31.9ms，严格门禁通过（Run 31522536737）。
+- 本机冷缓存广场首图 329.3ms；返回/最新/热门/搜索、公开作品上传双变体及父子媒体关联均通过。
+- 图片质量策略未降低：列表继续使用 960 档，详情继续使用 2048 档；个人打卡图片数量按管理员 `memberImageLimit` 设置执行，并保留旧任务的 `imageLimit` 回退。
