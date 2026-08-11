@@ -170,5 +170,6 @@ if (!route.includes(routeMarker)
 }
 
 await import('./apply-checkin-window-upload-plaza-page-v1.mjs');
+await import('./finalize-checkin-settings-v1.mjs');
 
-console.log('Applied check-in service binding with safe local fallback, per-request signing proof and aligned live check-in settings.');
+console.log('Applied check-in service binding with safe local fallback, per-request signing proof and authoritative live check-in settings.');
