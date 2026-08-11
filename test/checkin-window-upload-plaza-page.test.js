@@ -12,13 +12,15 @@ const topLevelSection = (source, anchor) => {
   return source.slice(start, match?.index ?? source.length);
 };
 
-test('独立打卡服务与主站统一使用后台四校区打卡设置', async () => {
+test('独立打卡服务与主站统一使用后台四校区打卡设置，未配置时保留任务原窗口', async () => {
   const runtime = read('cloudflare/lib/runtime.js');
   const dashboard = read('cloudflare/services/student-dashboard.js');
   const student = read('cloudflare/routes/student.js');
   assert.match(runtime, /CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1/);
-  assert.match(runtime, /checkinSettings:\s*\{/);
+  assert.match(runtime, /checkinSettingsConfigured/);
+  assert.match(runtime, /Object\.prototype\.hasOwnProperty\.call\(values, 'checkinSettings'\)/);
   assert.match(dashboard, /applyInteractionCheckinSettings/);
+  assert.match(dashboard, /config\?\.checkinSettingsConfigured === true/);
   assert.match(student, /const effectiveTask = applyInteractionCheckinSettings\(task, taskConfig\)/);
   assert.match(student, /taskWindowOpen\(effectiveTask, occurrenceDate, makeupAllowed\)/);
   assert.doesNotMatch(student, /taskWindowOpen\(task, occurrenceDate, makeupAllowed\)/);
@@ -49,7 +51,23 @@ test('独立打卡服务与主站统一使用后台四校区打卡设置', async
     })
   };
   assert.equal(taskWindowOpen(staleTask, today, false), false, '旧任务窗口应当处于关闭状态');
+
+  const unconfigured = applyInteractionCheckinSettings(staleTask, {
+    checkinSettingsConfigured: false,
+    checkinSettings: {
+      enabled: true,
+      activeStartDate: today,
+      activeEndDate: today,
+      dailyStart: '00:00',
+      dailyEnd: '23:59',
+      weekdays: allWeekdays
+    }
+  });
+  assert.equal(unconfigured.scheduleJson, staleTask.scheduleJson, '没有真实配置键时不得用合成默认值覆盖任务时段');
+  assert.equal(taskWindowOpen(unconfigured, today, false), false, '未配置后台时应继续尊重旧任务关闭窗口');
+
   const effective = applyInteractionCheckinSettings(staleTask, {
+    checkinSettingsConfigured: true,
     startDate: today,
     endDate: today,
     checkinSettings: {
@@ -75,7 +93,7 @@ test('独立打卡服务与主站统一使用后台四校区打卡设置', async
   assert.equal(currentTime >= effectiveSchedule.dailyStart && currentTime <= effectiveSchedule.dailyEnd, true,
     `上海当前时间不在测试开放窗口：now=${currentTime}, schedule=${JSON.stringify(effectiveSchedule)}`);
   assert.equal(taskWindowOpen(effective, today, false), true,
-    `后台最新开放时段仍未覆盖旧任务：today=${today}, now=${currentTime}, effective=${JSON.stringify(effective)}`);
+    `后台真实保存的最新开放时段仍未覆盖旧任务：today=${today}, now=${currentTime}, effective=${JSON.stringify(effective)}`);
 });
 
 test('个人打卡fast上传并行读取任务队伍设置并保留960px/300KB规格', () => {
@@ -118,8 +136,10 @@ test('修复层在V5和独立Check-in Worker部署链最后执行', () => {
   const checkinSplit = read('scripts/apply-checkin-service-split.mjs');
   const fixWorkflow = read('.github/workflows/fix-checkin-upload-plaza-test.yml');
   assert.match(v5, /await import\('\.\/apply-checkin-window-upload-plaza-page-v1\.mjs'\)/);
+  assert.match(v5, /await import\('\.\/finalize-checkin-settings-v1\.mjs'\)/);
   assert.match(v5, /await import\('\.\/finalize-plaza-detail-page-v1\.mjs'\)/);
   assert.match(checkinSplit, /await import\('\.\/apply-checkin-window-upload-plaza-page-v1\.mjs'\)/);
+  assert.match(checkinSplit, /await import\('\.\/finalize-checkin-settings-v1\.mjs'\)/);
   assert.match(fixWorkflow, /--runs 20 --threshold-ms 1000/);
   assert.match(fixWorkflow, /api\/checkin-service-health/);
 });
