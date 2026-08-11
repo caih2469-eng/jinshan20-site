@@ -1,14 +1,50 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const file = path.resolve('cloudflare/services/student-dashboard.js');
+const dashboardFile = path.resolve('cloudflare/services/student-dashboard.js');
+const runtimeFile = path.resolve('cloudflare/lib/runtime.js');
 const marker = '/* FINAL_CHECKIN_SETTINGS_V1 */';
 const dashboardV4Marker = '/* STRICT_P95_DASHBOARD_BATCH_V4 */';
-let source = fs.readFileSync(file, 'utf8');
+
+// Distinguish a real administrator-saved interaction setting from readConfig's synthesized defaults.
+// Without this bit, an old task with no checkinSettings row could be accidentally treated as 00:00–23:59.
+{
+  let runtime = fs.readFileSync(runtimeFile, 'utf8');
+  const configuredDeclaration = "  const checkinSettingsConfigured = Object.prototype.hasOwnProperty.call(values, 'checkinSettings');";
+  if (!runtime.includes(configuredDeclaration)) {
+    const checkinDeclaration = '  const checkinSettings = values.checkinSettings || {};';
+    if (!runtime.includes(checkinDeclaration)) {
+      throw new Error('未找到checkinSettings读取，无法标记管理员设置是否真实存在');
+    }
+    runtime = runtime.replace(
+      checkinDeclaration,
+      `${checkinDeclaration}\n${configuredDeclaration}`
+    );
+  }
+  if (!runtime.includes('    checkinSettingsConfigured,')) {
+    const returnAnchor = '    checkinSettings: {';
+    if (!runtime.includes(returnAnchor)) {
+      throw new Error('未找到checkinSettings返回值，无法暴露真实配置状态');
+    }
+    runtime = runtime.replace(returnAnchor, `    checkinSettingsConfigured,\n${returnAnchor}`);
+  }
+  fs.writeFileSync(runtimeFile, runtime, 'utf8');
+}
+
+let source = fs.readFileSync(dashboardFile, 'utf8');
 
 const canonicalHelper = `${marker}
 export const applyInteractionCheckinSettings = (task, config) => {
   if (!task || task.trackId !== 'interaction') return task;
+  const settingsConfigured = config?.checkinSettingsConfigured === true;
+  if (!settingsConfigured) {
+    return {
+      ...task,
+      checkinEnabled: task.checkinEnabled !== false,
+      imageLimit: Math.min(8, Math.max(1, Number(task.imageLimit || 3))),
+      memberImageLimit: Math.min(8, Math.max(1, Number(task.memberImageLimit || task.imageLimit || 1)))
+    };
+  }
   const settings = config?.checkinSettings || {};
   const existing = task.scheduleJson ? parseJson(task.scheduleJson, {}) : {};
   const activeStartDate = settings.activeStartDate || existing.activeStartDate || config?.startDate || shanghaiDate();
@@ -91,6 +127,8 @@ if (finalMarkerStart < 0 || finalHelperStart < 0 || finalHelperEnd < 0) {
 }
 const finalHelper = source.slice(finalMarkerStart, finalHelperEnd);
 for (const required of [
+  'const settingsConfigured = config?.checkinSettingsConfigured === true;',
+  'if (!settingsConfigured) {',
   'const settings = config?.checkinSettings || {};',
   'checkinEnabled: settings.enabled !== false',
   "const dailyStart = settings.dailyStart || existing.dailyStart || '00:00';",
@@ -105,5 +143,5 @@ if (source.includes('buildStudentTeamContext') && !source.includes(dashboardV4Ma
   throw new Error('检测到Dashboard V4共享上下文但marker丢失，拒绝继续');
 }
 
-fs.writeFileSync(file, source, 'utf8');
-console.log('Finalized authoritative interaction check-in settings while preserving Dashboard V4 marker and helpers.');
+fs.writeFileSync(dashboardFile, source, 'utf8');
+console.log('Finalized interaction check-in settings: only an explicit app_config.checkinSettings row overrides the task schedule.');
