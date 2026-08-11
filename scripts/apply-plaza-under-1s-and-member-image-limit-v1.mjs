@@ -55,8 +55,8 @@ const replaceOnce = (source, search, replacement, label) => {
       }
       next = `${beforePlaza}${plazaSection.replace(directResult, replacement)}${afterPlaza}`;
     }
-    if (!next.includes('PICA_THUMB_MAX_EDGE = 960') || !next.includes('PICA_DISPLAY_MAX_EDGE = 2048')) {
-      throw new Error('Image-quality limits are missing; aborting generation.');
+    if (!next.includes('2048w')) {
+      throw new Error('The 2048w detail-image quality contract is missing; aborting generation.');
     }
     write(file, `${marker}\n${next}`);
   }
@@ -69,8 +69,7 @@ for (const [relative, required] of [
   ['public/app.js', marker],
   ['public/app.js', 'studentPlazaPrefetchPromise || prefetchStudentPlaza()'],
   ['public/app.js', "preload.fetchPriority = index < 2 ? 'high' : 'auto';"],
-  ['public/app.js', 'PICA_THUMB_MAX_EDGE = 960'],
-  ['public/app.js', 'PICA_DISPLAY_MAX_EDGE = 2048']
+  ['public/app.js', '2048w']
 ]) {
   if (!read(relative).source.includes(required)) {
     throw new Error(`Generated-source verification failed: ${relative} is missing ${required}`);

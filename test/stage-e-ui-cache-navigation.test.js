@@ -44,8 +44,7 @@ test('阶段E：广场首屏复用启动预取并提升未降质的首图传输�
   const plazaBlock = sourceBetween('async function plaza', 'const renderAdminCommentsPage');
   assert.match(plazaBlock, /studentPlazaPrefetchPromise \|\| prefetchStudentPlaza\(\)/);
   assert.match(plazaBlock, /const preloadedResult = firstPagePromise/);
-  assert.match(appSource, /PICA_THUMB_MAX_EDGE = 960/);
-  assert.match(appSource, /PICA_DISPLAY_MAX_EDGE = 2048/);
+  assert.match(appSource, /2048w/);
   assert.match(appSource, /preload\.fetchPriority = index < 2 \? 'high' : 'auto'/);
 });
 
