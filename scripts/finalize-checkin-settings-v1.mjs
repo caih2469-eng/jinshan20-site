@@ -41,13 +41,28 @@ export const applyInteractionCheckinSettings = (task, config) => {
 
 `;
 
-const helperStart = source.indexOf('export const applyInteractionCheckinSettings = (task, config) => {');
+const helperAnchor = 'export const applyInteractionCheckinSettings = (task, config) => {';
+const helperStart = source.indexOf(helperAnchor);
 const buildTasksStart = source.indexOf('export const buildStudentTasks = async (env, user, options = {}) => {');
 if (buildTasksStart < 0) throw new Error('未找到buildStudentTasks，无法归一四校区打卡设置');
 
+const nextExportAfter = (from) => {
+  const pattern = /^export const [A-Za-z_$][\w$]*\s*=/gm;
+  pattern.lastIndex = from;
+  return pattern.exec(source)?.index ?? -1;
+};
+
 if (helperStart >= 0) {
-  if (helperStart > buildTasksStart) throw new Error('四校区打卡设置帮助函数位置异常');
-  source = source.slice(0, helperStart) + canonicalHelper + source.slice(buildTasksStart);
+  const helperEnd = nextExportAfter(helperStart + helperAnchor.length);
+  if (helperEnd < 0 || helperEnd <= helperStart) {
+    throw new Error('无法识别四校区打卡设置帮助函数的独立边界');
+  }
+  let replaceStart = helperStart;
+  const prefixWithMarker = `${marker}\n`;
+  if (source.slice(0, helperStart).endsWith(prefixWithMarker)) {
+    replaceStart -= prefixWithMarker.length;
+  }
+  source = source.slice(0, replaceStart) + canonicalHelper + source.slice(helperEnd);
 } else {
   source = source.slice(0, buildTasksStart) + canonicalHelper + source.slice(buildTasksStart);
 }
@@ -59,8 +74,17 @@ if (!source.includes("task?.checkinEnabled === false")) {
   source = source.replace(oldWindow, newWindow);
 }
 
-const helperEnd = source.indexOf('export const buildStudentTasks = async', source.indexOf(marker));
-const finalHelper = source.slice(source.indexOf(marker), helperEnd);
+const finalMarkerStart = source.indexOf(marker);
+const finalHelperStart = source.indexOf(helperAnchor, finalMarkerStart);
+const finalHelperEnd = (() => {
+  const pattern = /^export const [A-Za-z_$][\w$]*\s*=/gm;
+  pattern.lastIndex = finalHelperStart + helperAnchor.length;
+  return pattern.exec(source)?.index ?? -1;
+})();
+if (finalMarkerStart < 0 || finalHelperStart < 0 || finalHelperEnd < 0) {
+  throw new Error('最终四校区打卡设置帮助函数边界不完整');
+}
+const finalHelper = source.slice(finalMarkerStart, finalHelperEnd);
 for (const required of [
   'const settings = config?.checkinSettings || {};',
   'checkinEnabled: settings.enabled !== false',
@@ -74,4 +98,4 @@ for (const required of [
 }
 
 fs.writeFileSync(file, source, 'utf8');
-console.log('Finalized authoritative interaction check-in settings from app_config.checkinSettings.');
+console.log('Finalized authoritative interaction check-in settings without disturbing later Dashboard V4 declarations.');
