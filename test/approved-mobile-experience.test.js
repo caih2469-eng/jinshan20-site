@@ -41,6 +41,7 @@ test('活动广场、历史打卡和管理员列表图统一使用960px Pica链�
 
 test('高清原图位于详情之上并可保存且不销毁下层详情', () => {
   const app = read('public/app.js');
+  const style = read('public/style.css');
   const css = read('public/admin-dashboard-refactor.css');
   assert.match(app, /data-image-close/);
   assert.match(app, /data-image-save/);
@@ -48,6 +49,14 @@ test('高清原图位于详情之上并可保存且不销毁下层详情', () =>
   assert.match(app, /window\.open\(target, '_blank'/);
   assert.match(css, /\.image-viewer \{ z-index: 100000/);
   assert.match(app, /activeImageViewer\.remove\(\)/);
+  assert.match(style, /IMAGE_VIEWER_CENTER_V1/);
+  const centerMarkerIndex = style.lastIndexOf('/* IMAGE_VIEWER_CENTER_V1 */');
+  const nextMarkerIndex = style.indexOf('/* APPROVED_LAYOUT_TEAM_DRAFT_720_V2 */', centerMarkerIndex);
+  const centeredViewerCss = style.slice(centerMarkerIndex, nextMarkerIndex < 0 ? undefined : nextMarkerIndex);
+  assert.match(centeredViewerCss, /\.image-viewer-stage \{[\s\S]*?display: flex;[\s\S]*?align-items: center;[\s\S]*?justify-content: center;/);
+  assert.match(centeredViewerCss, /\.image-viewer-stage \.image-shell \{[\s\S]*?width: auto;[\s\S]*?height: auto;/);
+  assert.match(centeredViewerCss, /\.image-viewer-stage \.image-shell img \{[\s\S]*?width: auto;[\s\S]*?height: auto;[\s\S]*?object-fit: contain;/);
+  assert.doesNotMatch(centeredViewerCss, /width: 100%;[\s\S]*?height: 100%;/);
 });
 
 test('管理员可以设置打卡日期时段星期和两类照片数量', () => {

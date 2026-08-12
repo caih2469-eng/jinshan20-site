@@ -16,6 +16,12 @@ concurrency:
 
 env:
   STRICT_P95_BASE_URL: https://jinshan20-test.pages.dev
+  LOAD_BASE_URL: https://jinshan20-test.pages.dev
+  LOAD_USERS: '700'
+  LOAD_RUN_ID: viewer-${{ github.run_id }}
+  LOAD_ADMIN_ID: lf-admin-viewer-${{ github.run_id }}
+  LOAD_ADMIN_PASSWORD: ViewerLoad2026
+  LOAD_TEST_PASSWORD: ViewerLoad2026
 
 jobs:
   strict-p95:
@@ -169,6 +175,63 @@ jobs:
         run: node scripts/browser-strict-p95.mjs --base-url "$STRICT_P95_BASE_URL" --runs 20 --threshold-ms 1000
       - name: Run cold-cache Plaza first-image and quality gate
         run: node scripts/browser-plaza-mobile-preview.mjs --base-url "$STRICT_P95_BASE_URL"
+      - name: Run Linux Chrome original-image centering gate
+        run: node scripts/browser-image-viewer-center.mjs
+      - name: Enable 700-user write load only in isolated TEST
+        if: github.ref == 'refs/heads/fix/viewer-center-mainland-load700'
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          pnpm exec wrangler deploy --config cloudflare/checkin-service/wrangler.test.jsonc
+          node - <<'NODE'
+          const fs = require('fs');
+          const path = 'cloudflare/pages-test/wrangler.jsonc';
+          const config = JSON.parse(fs.readFileSync(path, 'utf8'));
+          config.vars.ALLOW_LOAD_TESTS = 'true';
+          config.services = Array.isArray(config.services) ? config.services : [];
+          if (!config.services.some((item) => item.binding === 'CHECKIN_SERVICE')) {
+            config.services.push({ binding: 'CHECKIN_SERVICE', service: 'jinshan20-checkin-test' });
+          }
+          fs.writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+          NODE
+          (cd cloudflare/pages-test && pnpm exec wrangler pages deploy ../../public --project-name jinshan20-test --branch develop)
+      - name: Run 700 distinct-user login upload check-in and verify load
+        if: github.ref == 'refs/heads/fix/viewer-center-mainland-load700'
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -o pipefail
+          node scripts/staging-member-checkin-fast-load.mjs --prepare --users 700 | tee reports/staging-member-checkin-fast-load-700.json
+      - name: Clean every 700-user TEST artifact
+        if: always() && github.ref == 'refs/heads/fix/viewer-center-mainland-load700'
+        run: |
+          set -o pipefail
+          node scripts/cleanup-staging-member-checkin-fast-load.mjs | tee reports/staging-member-checkin-fast-cleanup-700.json
+      - name: Restore TEST load protection
+        if: always() && github.ref == 'refs/heads/fix/viewer-center-mainland-load700'
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('fs');
+          const path = 'cloudflare/pages-test/wrangler.jsonc';
+          const config = JSON.parse(fs.readFileSync(path, 'utf8'));
+          config.vars.ALLOW_LOAD_TESTS = 'false';
+          config.services = Array.isArray(config.services) ? config.services : [];
+          if (!config.services.some((item) => item.binding === 'CHECKIN_SERVICE')) {
+            config.services.push({ binding: 'CHECKIN_SERVICE', service: 'jinshan20-checkin-test' });
+          }
+          fs.writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+          NODE
+          (cd cloudflare/pages-test && pnpm exec wrangler pages deploy ../../public --project-name jinshan20-test --branch develop)
       - name: Upload strict p95 report
         if: always() && hashFiles('reports/browser-strict-p95.json') != ''
         uses: actions/upload-artifact@v4
@@ -189,4 +252,21 @@ jobs:
         with:
           name: browser-approved-preview-strict-${{ github.run_id }}
           path: reports/browser-approved-preview.json
+          retention-days: 14
+      - name: Upload image viewer centering report
+        if: always() && hashFiles('reports/browser-image-viewer-center.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-image-viewer-center-${{ github.run_id }}
+          path: reports/browser-image-viewer-center.json
+          retention-days: 14
+      - name: Upload 700-user load and cleanup reports
+        if: always() && github.ref == 'refs/heads/fix/viewer-center-mainland-load700'
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-member-checkin-fast-load-700-${{ github.run_id }}
+          path: |
+            reports/staging-member-checkin-fast-load-700.json
+            reports/staging-member-checkin-fast-cleanup-700.json
+          if-no-files-found: warn
           retention-days: 14

@@ -1194,3 +1194,41 @@ button:active, [role="button"]:active { transform: scale(.97); box-shadow: none;
     transition: none;
   }
 }
+
+/* IMAGE_VIEWER_CENTER_V1 */
+/* Keep the original image centered in the usable viewport on WeChat and mobile browsers. */
+.image-viewer { display: block; padding: 0; overflow: hidden; }
+.image-viewer-stage {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  overflow: auto;
+}
+.image-viewer-stage .image-shell {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  height: auto;
+  max-width: 100vw;
+  max-height: 100vh;
+  max-height: 100dvh;
+  aspect-ratio: auto;
+  overflow: visible;
+  animation: none;
+  background: #050507;
+}
+.image-viewer-stage .image-shell img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100vw;
+  max-height: 100vh;
+  max-height: 100dvh;
+  object-fit: contain;
+}
