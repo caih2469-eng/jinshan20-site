@@ -404,10 +404,10 @@ test('fast接口拒绝超限、PNG、伪造头和超限尺寸，D1失败时清�
   }
   {
     const { state, env, token } = await make();
-    state.overloadBatches = 2;
+    state.overloadBatches = 4;
     const response = await worker.fetch(requestFor(token, webpBytes()), env, { waitUntil() {} });
     assert.equal(response.status, 201);
-    assert.equal(state.d1Batches, 3);
+    assert.equal(state.d1Batches, 5);
     assert.equal(state.puts, 1);
     assert.equal(state.deletes, 0);
     assert.equal(state.objects.size, 1);

@@ -300,9 +300,9 @@ const memberFastUpload = async (request, env) => {
         buffer.byteLength, width, height)
     ];
     const results = await retryD1Overload(() => env.DB.batch(statements), {
-      maxAttempts: 3,
+      maxAttempts: 5,
       baseDelayMs: 500,
-      maxDelayMs: 2_000
+      maxDelayMs: 8_000
     });
     if (!results[2]?.meta?.changes) {
       const recovered = await env.DB.prepare(

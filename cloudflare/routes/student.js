@@ -401,9 +401,9 @@ export const handleStudentRoutes = async (request, env, ctx, url, authenticatedU
          VALUES ('member_checkin',?1,'display',?2,?3,?4,?5)`
       ).bind(id, uploaded[0].objectKey, uploaded[0].contentType, uploaded[0].bytes, submittedAt));
       await retryD1Overload(() => env.DB.batch(statements), {
-        maxAttempts: 3,
+        maxAttempts: 5,
         baseDelayMs: 500,
-        maxDelayMs: 2_000
+        maxDelayMs: 8_000
       });
       const staleKeys = oldMedia.results.flatMap((item) => [
         item.objectKey,
