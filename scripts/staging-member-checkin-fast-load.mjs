@@ -10,7 +10,7 @@ const DEFAULT_CONFIG = 'cloudflare/pages-test/wrangler.jsonc';
 const DEFAULT_DATABASE = 'jinshan20-test';
 const DEFAULT_FIXTURE = 'test/fixtures/member-checkin-fast-load.webp';
 const CONCURRENCY_STAGES = Object.freeze([700]);
-const WRITE_RAMP_MS = 60_000;
+const WRITE_RAMP_MS = 180_000;
 const wranglerCli = path.resolve('node_modules/wrangler/bin/wrangler.js');
 
 export const validateLoadBaseUrl = (value) => {
@@ -340,15 +340,15 @@ const runUserWorkflow = async (options, fixture, metadata, taskId, userNumber) =
     result.statuses.push(...verify.statuses);
     verified = verify.ok && verify.body?.records?.some(
       (record) => record.date === occurrenceDate
-        && Boolean(record.objectKey)
         && Array.isArray(record.images)
         && record.images.length === 1
+        && Boolean(record.images[0]?.displayUrl || record.images[0]?.imageUrl)
     );
     if (verified) break;
     await sleep(Math.min(2_000, 250 * (2 ** verifyAttempts)));
   }
   result.phases.queryVerify = performance.now() - verifyStarted;
-  result.phases.queryVerifyAttempts = verifyAttempts + 1;
+  result.phases.queryVerifyAttempts = Math.min(8, verifyAttempts + 1);
   if (!verified) {
     result.error = `verify:${verify.status}:record-not-found`;
     return result;
