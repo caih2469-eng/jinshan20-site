@@ -71,6 +71,7 @@ const createState = () => ({
   makeup: false,
   failBatch: false,
   overloadBatches: 0,
+  overloadReads: 0,
   d1Batches: 0,
   puts: 0,
   deletes: 0
@@ -90,6 +91,10 @@ class Statement {
 
   async first() {
     const { state, sql, args } = this;
+    if (state.overloadReads > 0) {
+      state.overloadReads -= 1;
+      throw new Error('D1_ERROR: D1 DB is overloaded. Requests queued for too long.');
+    }
     if (/FROM users WHERE id/i.test(sql)) return state.users.get(args[0]) || null;
     if (/FROM tasks WHERE id/i.test(sql)) return args[0] === state.task.id ? { ...state.task } : null;
     if (/FROM teams t JOIN team_members/i.test(sql)) {
@@ -401,6 +406,16 @@ test('fast接口拒绝超限、PNG、伪造头和超限尺寸，D1失败时清�
       'x-image-width': '961'
     }), env, { waitUntil() {} });
     assert.equal(response.status, 400);
+  }
+  {
+    const { state, env, token } = await make();
+    state.overloadReads = 4;
+    const response = await worker.fetch(requestFor(token, webpBytes()), env, { waitUntil() {} });
+    assert.equal(response.status, 201);
+    assert.equal(state.overloadReads, 0);
+    assert.equal(state.puts, 1);
+    assert.equal(state.objects.size, 1);
+    assert.equal(state.media.size, 1);
   }
   {
     const { state, env, token } = await make();

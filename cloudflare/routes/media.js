@@ -641,7 +641,11 @@ export const handleMediaRoutes = async (request, env, ctx, url) => {
     return createUploadIntent(request, env);
   }
   if (url.pathname === '/api/media/member-checkin-fast' && request.method === 'POST') {
-    return memberFastUpload(request, env);
+    return retryD1Overload(() => memberFastUpload(request.clone(), env), {
+      maxAttempts: 5,
+      baseDelayMs: 500,
+      maxDelayMs: 8_000
+    });
   }
   const confirm = url.pathname.match(/^\/api\/media\/upload-intents\/([^/]+)\/confirm$/);
   if (confirm && request.method === 'POST') return confirmUpload(request, env, decodeURIComponent(confirm[1]));
