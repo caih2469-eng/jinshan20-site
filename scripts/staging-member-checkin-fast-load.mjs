@@ -234,14 +234,21 @@ const login = (options, studentId, password) => fetchJson(`${options.baseUrl}/ap
 });
 
 const adminInventory = async (options, adminToken) => {
-  const result = await fetchJson(
-    `${options.baseUrl}/__load/member-checkin-fast/inventory?runId=${encodeURIComponent(options.runId)}`,
-    { headers: { authorization: `Bearer ${adminToken}` } }
-  );
-  if (!result.ok) {
-    throw new Error(`测试库存查询失败：${result.status} ${JSON.stringify(result.body || result.error)}`);
+  const inventoryUrl = `${options.baseUrl}/__load/member-checkin-fast/inventory?runId=${encodeURIComponent(options.runId)}`;
+  for (let attempt = 0; attempt < 46; attempt += 1) {
+    const result = await fetchJson(
+      inventoryUrl,
+      { headers: { authorization: `Bearer ${adminToken}`, 'cache-control': 'no-cache' } }
+    );
+    if (result.ok) return result.body;
+    const deploymentPending = result.status === 404
+      && /负载测试接口未启用/.test(String(result.body?.error || ''));
+    if (!deploymentPending || attempt === 45) {
+      throw new Error(`测试库存查询失败：${result.status} ${JSON.stringify(result.body || result.error)}`);
+    }
+    await sleep(2_000);
   }
-  return result.body;
+  throw new Error('测试库存查询等待超时');
 };
 
 const runPool = async (items, concurrency, worker) => {
