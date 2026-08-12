@@ -16,7 +16,7 @@ test('fast load and cleanup tools reject production hosts', async () => {
   }
 });
 
-test('fast load uses the real fast upload chain and four concurrency stages', () => {
+test('fast load uses the real fast upload chain at 700-user concurrency', () => {
   const source = fs.readFileSync(
     path.join(__dirname, '..', 'scripts', 'staging-member-checkin-fast-load.mjs'),
     'utf8'
@@ -24,7 +24,8 @@ test('fast load uses the real fast upload chain and four concurrency stages', ()
   assert.match(source, /member-checkin-fast/);
   assert.match(source, /member-checkin`/);
   assert.match(source, /checkins\/history/);
-  assert.match(source, /\[10,\s*25,\s*50,\s*100\]/);
+  assert.match(source, /CONCURRENCY_STAGES = Object\.freeze\(\[700\]\)/);
+  assert.match(source, /Boolean\(record\.objectKey\)/);
   assert.doesNotMatch(source, /upload-intents/);
   assert.doesNotMatch(source, /variant.*thumb/i);
   assert.match(source, /crypto\.randomUUID\(\)/);
