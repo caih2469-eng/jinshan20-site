@@ -28,7 +28,7 @@ if (!route.includes(routeMarker)) {
   );
   route = replaceOnce(
     route,
-    `  const auth = await requireUser(request, env);\n  if (auth.error) return auth.error;\n  const user = auth.user;\n  await ensureInteractionSchema(env);`,
+    /  const auth = await requireUser\(request, env\);\r?\n  if \(auth\.error\) return auth\.error;\r?\n  const user = auth\.user;\r?\n  await ensureInteractionSchema\(env\);/,
     `  const auth = authenticatedUser ? { user: authenticatedUser } : await requireUser(request, env);\n  if (auth.error) return auth.error;\n  const user = auth.user;\n  if (env.SKIP_RUNTIME_SCHEMA !== 'true') await ensureInteractionSchema(env);`,
     '活动广场认证与运行时建表链路'
   );

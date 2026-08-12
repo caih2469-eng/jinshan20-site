@@ -54,19 +54,19 @@ const patchPlazaPage = (source, label) => {
   );
   next = replaceOnce(
     next,
-    `  prepareDynamicContent(app);\n  requestAnimationFrame(rebalancePlazaColumns);\n  recordPerf('page-render', {`,
+    /  prepareDynamicContent\(app\);\r?\n  requestAnimationFrame\(rebalancePlazaColumns\);\r?\n  recordPerf\('page-render', \{/,
     `  prepareDynamicContent(app);\n  requestAnimationFrame(rebalancePlazaColumns);\n  scheduleVisiblePlazaDetailWarmup();\n  recordPerf('page-render', {`,
     `${label}详情预热启动`
   );
   next = replaceOnce(
     next,
-    `    if (cacheIsFresh(cached)) queueMicrotask(() => { void refresh(); });\n    else void refresh();`,
+    /    if \(cacheIsFresh\(cached\)\) queueMicrotask\(\(\) => \{ void refresh\(\); \}\);\r?\n    else void refresh\(\);/,
     `    if (cacheIsFresh(cached)) {\n      setTimeout(() => { void refresh(); }, 3200);\n    } else void refresh();`,
     `${label}缓存后台刷新让出首屏带宽`
   );
   next = replaceOnce(
     next,
-    `  const result = await api(path);\n  writeViewCache(plazaViewCache, cacheKey, result);\n  renderPlazaPage(result, safeSort, page, '', pageEpoch, { query: safeQuery });`,
+    /  const result = await api\(path\);\r?\n  writeViewCache\(plazaViewCache, cacheKey, result\);\r?\n  renderPlazaPage\(result, safeSort, page, '', pageEpoch, \{ query: safeQuery \}\);/,
     `  const bootstrapResult = safeSort === 'latest' && page === 1 && !safeQuery\n    ? await Promise.resolve(window.__BOOTSTRAP_PLAZA_PROMISE__).catch(() => null)\n    : null;\n  const result = bootstrapResult || await api(path);\n  writeViewCache(plazaViewCache, cacheKey, result);\n  renderPlazaPage(result, safeSort, page, '', pageEpoch, { query: safeQuery });`,
     `${label}启动预取结果复用`
   );
@@ -76,6 +76,28 @@ const patchPlazaPage = (source, label) => {
 const patchAppRuntime = (source) => {
   if (source.includes(marker)) return source;
   let next = source;
+  if (!next.includes('const scheduleVisiblePlazaDetailWarmup = () => {')) {
+    const detailWarmup = [
+      'const scheduleVisiblePlazaDetailWarmup = () => {',
+      "  if (document.body.dataset.view !== 'plaza') return;",
+      '  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection || {};',
+      "  if (connection.saveData || /(^|-)2g$/.test(connection.effectiveType || '')) return;",
+      "  const postIds = [...document.querySelectorAll('[data-post]')].slice(0, 4)",
+      '    .map((card) => card.dataset.post).filter(Boolean);',
+      '  queueMicrotask(() => postIds.forEach((postId, index) => {',
+      '    const delay = index < 2 ? index * 40 : 220 + (index - 2) * 100;',
+      '    setTimeout(() => { void loadPlazaPost(postId).catch(() => null); }, delay);',
+      '  }));',
+      '};',
+      ''
+    ].join('\n');
+    next = replaceOnce(
+      next,
+      'const clearUserViewCaches = () => {',
+      `${detailWarmup}const clearUserViewCaches = () => {`,
+      'plaza detail warmup helper'
+    );
+  }
   if (next.includes(mobileLayoutMarker)) {
     next = patchPlazaPage(next, '主应用');
     next = replaceOnce(
@@ -92,40 +114,44 @@ const patchAppRuntime = (source) => {
       '活动广场运行时性能标记与缓存时长'
     );
   }
-  next = replaceOnce(
-    next,
-    `  const run = () => postIds.forEach((postId, index) => {\n    setTimeout(() => { void loadPlazaPost(postId).catch(() => null); }, index * 90);\n  });\n  if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 900 });\n  else setTimeout(run, 120);`,
-    `  const run = () => postIds.forEach((postId, index) => {\n    const delay = index < 2 ? index * 40 : 220 + (index - 2) * 100;\n    setTimeout(() => { void loadPlazaPost(postId).catch(() => null); }, delay);\n  });\n  queueMicrotask(run);`,
-    '可见卡片详情预热调度'
-  );
-  next = replaceOnce(
-    next,
-    '<p class="muted">正在补齐成员与全部图片…</p>',
-    `<p class="muted">${'${'}formatDate(previewPost.publishedAt)}</p>`,
-    '详情即时预览文案'
-  );
-  next = replaceOnce(
-    next,
-    `src="${'${'}escapeHtml(previewImage.thumbUrl || previewImage.imageUrl)}" alt="活动图片"`,
-    `src="${'${'}escapeHtml(previewImage.thumbUrl || previewImage.imageUrl)}" srcset="${'${'}escapeHtml(previewImage.thumbUrl || previewImage.imageUrl)} 960w, ${'${'}escapeHtml(previewImage.displayUrl || previewImage.imageUrl)} 2048w" sizes="(max-width: 720px) 100vw, 720px" alt="活动图片"`,
-    '详情即时预览响应式图片'
-  );
-  next = replaceOnce(
-    next,
-    `            ${'${'}imageIndex === 0 ? 'src' : 'data-src'}="${'${'}escapeHtml(image.thumbUrl || image.imageUrl)}" alt="活动图片"`,
-    [
-      `            ${'${'}imageIndex === 0`,
-      `              ? \`src="${'${'}escapeHtml(image.thumbUrl || image.imageUrl)}" srcset="${'${'}escapeHtml(image.thumbUrl || image.imageUrl)} 960w, ${'${'}escapeHtml(image.displayUrl || image.imageUrl)} 2048w" sizes="(max-width: 720px) 100vw, 720px"\``,
-      `              : \`data-src="${'${'}escapeHtml(image.thumbUrl || image.imageUrl)}"\`} alt="活动图片"`
-    ].join('\n'),
-    '详情首图响应式高清资源'
-  );
-  next = replaceOnce(
-    next,
-    `  prepareDynamicContent(root);\n  root.querySelector('#closePost').onclick = closePost;\n  recordPerf('plaza-detail-visible', {`,
-    `  prepareDynamicContent(root);\n  root.querySelector('#closePost').onclick = closePost;\n  post.images.slice(0, 2).forEach((image, imageIndex) => {\n    const displayUrl = buildMediaUrl(image.displayUrl || image.imageUrl || image.thumbUrl);\n    if (!displayUrl) return;\n    const preload = new Image();\n    preload.decoding = 'async';\n    preload.fetchPriority = imageIndex === 0 ? 'high' : 'low';\n    preload.src = displayUrl;\n  });\n  recordPerf('plaza-detail-visible', {`,
-    '详情高清图片预热'
-  );
+  if (!next.includes('const delay = index < 2 ? index * 40 : 220 + (index - 2) * 100;')) {
+    next = replaceOnce(
+      next,
+      `  const run = () => postIds.forEach((postId, index) => {\n    setTimeout(() => { void loadPlazaPost(postId).catch(() => null); }, index * 90);\n  });\n  if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 900 });\n  else setTimeout(run, 120);`,
+      `  const run = () => postIds.forEach((postId, index) => {\n    const delay = index < 2 ? index * 40 : 220 + (index - 2) * 100;\n    setTimeout(() => { void loadPlazaPost(postId).catch(() => null); }, delay);\n  });\n  queueMicrotask(run);`,
+      '可见卡片详情预热调度'
+    );
+  }
+  if (next.includes('const previewPost = readPlazaPostPreview(postId);')) {
+    next = replaceOnce(
+      next,
+      '<p class="muted">正在补齐成员与全部图片…</p>',
+      `<p class="muted">${'${'}formatDate(previewPost.publishedAt)}</p>`,
+      '详情即时预览文案'
+    );
+    next = replaceOnce(
+      next,
+      `src="${'${'}escapeHtml(previewImage.thumbUrl || previewImage.imageUrl)}" alt="活动图片"`,
+      `src="${'${'}escapeHtml(previewImage.thumbUrl || previewImage.imageUrl)}" srcset="${'${'}escapeHtml(previewImage.thumbUrl || previewImage.imageUrl)} 960w, ${'${'}escapeHtml(previewImage.displayUrl || previewImage.imageUrl)} 2048w" sizes="(max-width: 720px) 100vw, 720px" alt="活动图片"`,
+      '详情即时预览响应式图片'
+    );
+    next = replaceOnce(
+      next,
+      `            ${'${'}imageIndex === 0 ? 'src' : 'data-src'}="${'${'}escapeHtml(image.thumbUrl || image.imageUrl)}" alt="活动图片"`,
+      [
+        `            ${'${'}imageIndex === 0`,
+        `              ? \`src="${'${'}escapeHtml(image.thumbUrl || image.imageUrl)}" srcset="${'${'}escapeHtml(image.thumbUrl || image.imageUrl)} 960w, ${'${'}escapeHtml(image.displayUrl || image.imageUrl)} 2048w" sizes="(max-width: 720px) 100vw, 720px"\``,
+        `              : \`data-src="${'${'}escapeHtml(image.thumbUrl || image.imageUrl)}"\`} alt="活动图片"`
+      ].join('\n'),
+      '详情首图响应式高清资源'
+    );
+    next = replaceOnce(
+      next,
+      `  prepareDynamicContent(root);\n  root.querySelector('#closePost').onclick = closePost;\n  recordPerf('plaza-detail-visible', {`,
+      `  prepareDynamicContent(root);\n  root.querySelector('#closePost').onclick = closePost;\n  post.images.slice(0, 2).forEach((image, imageIndex) => {\n    const displayUrl = buildMediaUrl(image.displayUrl || image.imageUrl || image.thumbUrl);\n    if (!displayUrl) return;\n    const preload = new Image();\n    preload.decoding = 'async';\n    preload.fetchPriority = imageIndex === 0 ? 'high' : 'low';\n    preload.src = displayUrl;\n  });\n  recordPerf('plaza-detail-visible', {`,
+      '详情高清图片预热'
+    );
+  }
 
   const oldPrefetchBlock = `      const firstImage = result.posts?.[0]?.images?.[0];\n      const firstUrl = firstImage?.thumbUrl || firstImage?.imageUrl || '';\n      if (firstUrl) {\n        void fetch(buildMediaUrl(firstUrl), {\n          credentials: 'same-origin',\n          cache: 'force-cache',\n          priority: 'low'\n        }).catch(() => null);\n      }`;
   const upgradedPrefetchBlock = `      const preloadImages = (result.posts || []).slice(0, 4)\n        .map((post) => post.images?.[0])\n        .filter(Boolean);\n      preloadImages.forEach((image, index) => {\n        const thumbUrl = buildMediaUrl(image.thumbUrl || image.imageUrl || image.displayUrl);\n        const displayUrl = buildMediaUrl(image.displayUrl || image.imageUrl || image.thumbUrl);\n        if (!thumbUrl) return;\n        const preload = new Image();\n        preload.decoding = 'async';\n        preload.fetchPriority = index < 2 ? 'high' : 'auto';\n        preload.sizes = '(max-width: 720px) calc(50vw - 18px), 360px';\n        if (displayUrl && displayUrl !== thumbUrl) preload.srcset = \`${'${'}thumbUrl} 960w, ${'${'}displayUrl} 2048w\`;\n        preload.src = thumbUrl;\n      });`;

@@ -15,12 +15,14 @@ import {
   shanghaiTime,
   TRACKS
 } from './lib/runtime.js';
+import { createMediaSigningAlignmentProof } from './lib/media-signing.js';
 import { handleStudentRoutes } from './routes/student.js';
 import { handlePlazaRoutes } from './routes/plaza.js';
+import { buildLoginPlazaFirstPage } from './services/plaza-first-page.js';
 import { handleAdminRoutes } from './routes/admin.js';
 import { canAccessMaterialFile, handleMaterialRoutes } from './routes/materials.js';
 import { handleMediaRoutes } from './routes/media.js';
-import { buildStudentDashboard } from './services/student-dashboard.js';
+import { buildStudentDashboard, buildStudentDashboardForLogin } from './services/student-dashboard.js';
 
 const login = async (request, env) => {
   const body = await readJson(request, 16 * 1024);
@@ -29,6 +31,7 @@ const login = async (request, env) => {
   if (!studentId || !password) return json({ error: '请输入学号和密码' }, 400);
   const ip = request.headers.get('cf-connecting-ip') || 'unknown';
   const identity = await sha256(`${ip}:${studentId}`);
+  const lookupStartedAt = performance.now();
   const [attempt, user] = await Promise.all([
     env.DB.prepare(
       `SELECT attempt_count AS attemptCount,window_started_at AS windowStartedAt,
@@ -41,11 +44,16 @@ const login = async (request, env) => {
          FROM users WHERE student_id=?1 LIMIT 1`
     ).bind(studentId).first()
   ]);
+  recordRequestTiming(request, 'login_lookup', performance.now() - lookupStartedAt);
   const now = Date.now();
   if (attempt?.blockedUntil && Date.parse(attempt.blockedUntil) > now) {
     return json({ error: '登录尝试过多，请稍后再试' }, 429);
   }
-  if (!user || user.status !== 'active' || !(await passwordMatches(password, user.passwordHash))) {
+  const passwordStartedAt = performance.now();
+  const passwordAccepted = Boolean(user && user.status === 'active'
+    && await passwordMatches(password, user.passwordHash));
+  recordRequestTiming(request, 'login_password', performance.now() - passwordStartedAt);
+  if (!passwordAccepted) {
     const inWindow = attempt && now - Date.parse(attempt.windowStartedAt) < 15 * 60 * 1000;
     const count = inWindow ? Number(attempt.attemptCount) + 1 : 1;
     const blockedUntil = count >= 10 ? new Date(now + 15 * 60 * 1000).toISOString() : null;
@@ -58,23 +66,88 @@ const login = async (request, env) => {
     return json({ error: '学号或密码不正确' }, 401);
   }
   if (attempt) {
+    const cleanupStartedAt = performance.now();
     await env.DB.prepare('DELETE FROM login_attempts WHERE identity_hash=?1').bind(identity).run();
+    recordRequestTiming(request, 'login_cleanup', performance.now() - cleanupStartedAt);
   }
   delete user.passwordHash;
-  const token = await createToken(user, env.SESSION_SECRET);
-  return json({
-    token,
+  /* LOGIN_BOOTSTRAP_HANDOFF_V2 */
+  const loginUser = {
+    id: user.id,
+    studentId: user.studentId,
+    name: user.name,
+    role: user.role,
+    trackId: user.trackId,
+    status: user.status
+  };
+  /* LOGIN_D1_BATCH_V6 */
+  const tokenPromise = (async () => {
+    const startedAt = performance.now();
+    try {
+      return await createToken(user, env.SESSION_SECRET);
+    } finally {
+      recordRequestTiming(request, 'login_session', performance.now() - startedAt);
+    }
+  })();
+  const dashboardPromise = user.role === 'student'
+    ? (async () => {
+      const startedAt = performance.now();
+      try {
+        return await buildStudentDashboardForLogin(env, user);
+      } catch {
+        return null;
+      } finally {
+        recordRequestTiming(request, 'login_dashboard', performance.now() - startedAt);
+      }
+    })()
+    : Promise.resolve(null);
+  /* LOGIN_PLAZA_HANDOFF_V1 */
+  const plazaPromise = user.role === 'student'
+    ? (async () => {
+      const startedAt = performance.now();
+      try {
+        return await buildLoginPlazaFirstPage(env, user.id);
+      } catch {
+        return null;
+      } finally {
+        recordRequestTiming(request, 'login_plaza', performance.now() - startedAt);
+      }
+    })()
+    : Promise.resolve(null);
+  const [token, dashboard, plaza] = await Promise.all([
+    tokenPromise,
+    dashboardPromise,
+    plazaPromise
+  ]);
+  const bootstrap = dashboard ? {
+    ok: true,
     user: {
       id: user.id,
       studentId: user.studentId,
       name: user.name,
       role: user.role,
+      campus: user.campus,
       trackId: user.trackId,
-      status: user.status
-    }
+      status: user.status,
+      createdAt: user.createdAt
+    },
+    config: dashboard.config,
+    tracks: TRACKS,
+    date: dashboard.date || shanghaiDate(),
+    time: dashboard.time || shanghaiTime(),
+    dashboard,
+    plaza
+  } : null;
+  const serializeStartedAt = performance.now();
+  const response = json({
+    token,
+    user: loginUser,
+    bootstrap
   }, 200, {
     'set-cookie': `session_token=${token}; Path=/; Max-Age=43200; HttpOnly; Secure; SameSite=Lax`
   });
+  recordRequestTiming(request, 'login_serialize', performance.now() - serializeStartedAt);
+  return response;
 };
 
 const fileResponse = async (request, env, id) => {
@@ -235,6 +308,124 @@ const materialFileResponse = async (request, env, id) => {
   });
 };
 
+/* PLAZA_SERVICE_BINDING_V1 */
+const PLAZA_USER_HEADER = 'x-jinshan-plaza-user';
+const PLAZA_SERVICE_HEADER = 'x-jinshan-internal-service';
+const isPlazaServiceRoute = (pathname) => pathname === '/api/rankings'
+  || pathname === '/api/plaza'
+  || pathname === '/api/inbox'
+  || pathname === '/api/admin/comments'
+  || /^\/api\/plaza\/[^/]+(?:\/(?:view|like|comments))?$/.test(pathname)
+  || /^\/api\/plaza\/[^/]+\/comments\/[^/]+$/.test(pathname)
+  || /^\/api\/admin\/comments\/[^/]+$/.test(pathname);
+const plazaInternalUser = (user) => encodeURIComponent(JSON.stringify({
+  id: user.id,
+  role: user.role,
+  trackId: user.trackId,
+  status: user.status
+}));
+const dispatchPlazaService = async (request, env, ctx, url) => {
+  if (!env.PLAZA_SERVICE || !isPlazaServiceRoute(url.pathname)) return null;
+  let user = null;
+  if (url.pathname !== '/api/rankings') {
+    const auth = await requireUser(request, env);
+    if (auth.error) return auth.error;
+    user = auth.user;
+  }
+  const headers = new Headers(request.headers);
+  headers.delete(PLAZA_USER_HEADER);
+  headers.delete(PLAZA_SERVICE_HEADER);
+  headers.set(PLAZA_SERVICE_HEADER, 'plaza-v1');
+  if (user) headers.set(PLAZA_USER_HEADER, plazaInternalUser(user));
+  const serviceRequest = new Request(request.clone(), { headers });
+  try {
+    return await env.PLAZA_SERVICE.fetch(serviceRequest);
+  } catch (error) {
+    if (request.method === 'GET' || request.method === 'HEAD') return null;
+    return json({ error: '活动广场服务暂时不可用，请稍后重试' }, 503, {
+      'x-jinshan-service-error': 'plaza-binding'
+    });
+  }
+};
+/* CHECKIN_SERVICE_BINDING_V1 */
+const CHECKIN_USER_HEADER = 'x-jinshan-checkin-user';
+const CHECKIN_SERVICE_HEADER = 'x-jinshan-internal-service';
+const CHECKIN_PROOF_CHALLENGE_HEADER = 'x-jinshan-checkin-proof-challenge';
+const CHECKIN_PROOF_HEADER = 'x-jinshan-checkin-proof';
+const CHECKIN_HEALTH_PATH = '/api/checkin-service-health';
+const isCheckinServiceRoute = (pathname) => pathname === CHECKIN_HEALTH_PATH
+  || pathname === '/api/checkins'
+  || pathname === '/api/checkins/history'
+  || /^\/api\/tasks\/[^/]+\/member-checkin$/.test(pathname);
+const checkinInternalUser = (user) => encodeURIComponent(JSON.stringify({
+  id: user.id,
+  role: user.role,
+  trackId: user.trackId,
+  status: user.status
+}));
+const normalizedCheckinHealthResponse = async (response) => {
+  const headers = new Headers(response.headers);
+  headers.set('content-type', 'application/json; charset=utf-8');
+  headers.delete('content-length');
+  let body = {};
+  try { body = await response.json(); } catch {}
+  delete body.mediaSigningProof;
+  const ready = Boolean(response.ok && body.ok && body.mediaSigningAligned === true);
+  return new Response(JSON.stringify({ ...body, ok: ready, mediaSigningAligned: ready }), {
+    status: ready ? 200 : 503,
+    headers
+  });
+};
+const isSafeCheckinLocalFallback = async (response) => {
+  if (response.headers.get('x-jinshan-checkin-alignment') === 'failed') return true;
+  if (response.status !== 503) return false;
+  try {
+    const body = await response.clone().json();
+    return body?.error === '打卡服务媒体签名尚未对齐'
+      || body?.error === '打卡服务尚未完成媒体签名配置';
+  } catch {
+    return false;
+  }
+};
+const dispatchCheckinService = async (request, env, ctx, url) => {
+  if (!env.CHECKIN_SERVICE || !isCheckinServiceRoute(url.pathname)) return null;
+  const isHealth = url.pathname === CHECKIN_HEALTH_PATH && request.method === 'GET';
+  let user = null;
+  if (!isHealth) {
+    const auth = await requireUser(request, env);
+    if (auth.error) return auth.error;
+    user = auth.user;
+  }
+  const headers = new Headers(request.headers);
+  headers.delete(CHECKIN_USER_HEADER);
+  headers.delete(CHECKIN_SERVICE_HEADER);
+  headers.delete(CHECKIN_PROOF_CHALLENGE_HEADER);
+  headers.delete(CHECKIN_PROOF_HEADER);
+  headers.set(CHECKIN_SERVICE_HEADER, 'checkin-v1');
+  let challenge;
+  let proof;
+  try {
+    challenge = crypto.randomUUID();
+    proof = await createMediaSigningAlignmentProof(env, challenge);
+  } catch {
+    return null;
+  }
+  headers.set(CHECKIN_PROOF_CHALLENGE_HEADER, challenge);
+  headers.set(CHECKIN_PROOF_HEADER, proof);
+  if (user) headers.set(CHECKIN_USER_HEADER, checkinInternalUser(user));
+  const serviceRequest = new Request(request.clone(), { headers });
+  try {
+    const response = await env.CHECKIN_SERVICE.fetch(serviceRequest);
+    if (isHealth) return await normalizedCheckinHealthResponse(response);
+    if (await isSafeCheckinLocalFallback(response)) return null;
+    return response;
+  } catch {
+    if (request.method === 'GET' || request.method === 'HEAD') return null;
+    return json({ error: '打卡服务暂时不可用，请稍后重试' }, 503, {
+      'x-jinshan-service-error': 'checkin-binding'
+    });
+  }
+};
 const routeRequest = async (request, env, ctx) => {
   try {
       const url = new URL(request.url);
@@ -299,12 +490,18 @@ const routeRequest = async (request, env, ctx) => {
         return await materialFileResponse(request, env, decodeURIComponent(materialFileMatch[1]));
       }
 
+      const plazaService = await dispatchPlazaService(request, env, ctx, url);
+      if (plazaService) return plazaService;
+
       const admin = await handleAdminRoutes(request, env, ctx, url);
       if (admin) return admin;
       const materials = await handleMaterialRoutes(request, env, ctx, url);
       if (materials) return materials;
       const plaza = await handlePlazaRoutes(request, env, ctx, url);
       if (plaza) return plaza;
+      const checkinService = await dispatchCheckinService(request, env, ctx, url);
+      if (checkinService) return checkinService;
+
       const student = await handleStudentRoutes(request, env, ctx, url);
       if (student) return student;
     return json({ error: '接口不存在' }, 404);

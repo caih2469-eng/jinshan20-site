@@ -1,4 +1,6 @@
 const encoder = new TextEncoder();
+let hmacKeyPromise = null;
+let hmacKeySecret = null;
 
 const base64Url = (bytes) =>
   btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
@@ -17,13 +19,21 @@ const signingPayload = ({ mediaId, objectKey, exp, aud, scope, environment }) =>
 
 const hmac = async (payload, secret) => {
   if (!secret) throw Object.assign(new Error('媒体签名密钥未配置'), { status: 503 });
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
+  if (!hmacKeyPromise || hmacKeySecret !== secret) {
+    hmacKeySecret = secret;
+    hmacKeyPromise = crypto.subtle.importKey(
+      'raw',
+      encoder.encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    ).catch((error) => {
+      hmacKeyPromise = null;
+      hmacKeySecret = null;
+      throw error;
+    });
+  }
+  const key = await hmacKeyPromise;
   return base64Url(new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(payload))));
 };
 

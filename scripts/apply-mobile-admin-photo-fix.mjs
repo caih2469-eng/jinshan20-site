@@ -3,6 +3,7 @@ import path from 'node:path';
 
 const root = process.cwd();
 const appPath = path.join(root, 'public', 'app.js');
+const adminClientPath = path.join(root, 'public', 'admin-client.js');
 const cssPath = path.join(root, 'public', 'admin-dashboard-refactor.css');
 const bootstrapPath = path.join(root, 'public', 'bootstrap.js');
 const indexPath = path.join(root, 'public', 'index.html');
@@ -22,6 +23,7 @@ const replaceOnce = (source, pattern, replacement, label) => {
 
 [
   [appPath, 'public/app.js'],
+  [adminClientPath, 'public/admin-client.js'],
   [cssPath, '后台样式文件'],
   [bootstrapPath, '启动脚本'],
   [indexPath, '首页文件'],
@@ -30,19 +32,69 @@ const replaceOnce = (source, pattern, replacement, label) => {
 ].forEach(([file, label]) => required(file, label));
 
 let appSource = fs.readFileSync(appPath, 'utf8');
-if (!appSource.includes(marker)) {
-  appSource = replaceOnce(appSource, 'const MEDIA_THUMB_MAX_EDGE = 360;', 'const MEDIA_THUMB_MAX_EDGE = 540;', '前端缩略图尺寸常量');
-  appSource = replaceOnce(appSource, 'const MEDIA_THUMB_MAX_SIZE_MB = 0.12;', 'const MEDIA_THUMB_MAX_SIZE_MB = 0.18;', '前端缩略图体积常量');
-  appSource = replaceOnce(appSource, 'const MEDIA_THUMB_QUALITY = 0.72;', 'const MEDIA_THUMB_QUALITY = 0.82;', '前端缩略图质量常量');
+const adminClientSource = fs.readFileSync(adminClientPath, 'utf8');
+const usesLazyAdminClient = /function openAdminUserDrawer\(studentUser, (?:teams, )?date/.test(adminClientSource)
+  && adminClientSource.includes("document.querySelectorAll('.admin-user-tile')")
+  && adminClientSource.includes('/api/admin/users/${encodeURIComponent(studentUser.id)}/checkins');
+const hasImmediateLazyDrawer = usesLazyAdminClient
+  && adminClientSource.includes('ADMIN_CHECKIN_CACHE_TTL_MS = 60_000')
+  && adminClientSource.includes("startPhotoFlow('admin-checkin')")
+  && adminClientSource.includes('openAdminUserDrawer(studentUser, date)')
+  && adminClientSource.includes("['profile',")
+  && adminClientSource.includes("['team',")
+  && adminClientSource.includes("['makeup',")
+  && adminClientSource.includes("['manage',")
+  && !adminClientSource.includes("const [teams, tasks] = await Promise.all([");
 
-  const userClickPattern = /  document\.querySelectorAll\('\.admin-user-tile'\)\.forEach\(\(button\) => \{\n    button\.onclick = async \(\) => \{[\s\S]*?\n    \};\n  \}\);/;
+if (appSource.includes('/* PICA_IMAGE_PIPELINE_V1 */')
+    && (!usesLazyAdminClient || hasImmediateLazyDrawer)) {
+  const mediaSource = fs.readFileSync(mediaRoutePath, 'utf8');
+  const hasAdminDrawer = usesLazyAdminClient
+    || appSource.includes('function openAdminUserDrawer(studentUser, teams, date, tasks = [])');
+  if (!hasAdminDrawer || !appSource.includes('PICA_THUMB_MAX_EDGE = 960')
+      || !mediaSource.includes('THUMB_MAX_EDGE = 960')) {
+    throw new Error('Current Pica/admin photo implementation is incomplete');
+  }
+  console.log('Validated current Pica image quality and admin photo implementation.');
+  process.exit(0);
+}
+
+if (!appSource.includes(marker) && usesLazyAdminClient && appSource.includes('uploadMemberCheckinFast(')) {
+  appSource = replaceOnce(
+    appSource,
+    'const MEDIA_THUMB_MAX_EDGE = 360;',
+    `${marker}\nconst MEDIA_THUMB_MAX_EDGE = 360;`,
+    'current mobile admin photo implementation marker'
+  );
+  fs.writeFileSync(appPath, appSource, 'utf8');
+}
+
+if (usesLazyAdminClient && appSource.includes('uploadMemberCheckinFast(')
+    && hasImmediateLazyDrawer) {
+  console.log('Validated current lazy admin photo implementation without applying legacy replacements.');
+  process.exit(0);
+}
+
+if (!appSource.includes(marker)
+    || (usesLazyAdminClient && !hasImmediateLazyDrawer)) {
+  if (!appSource.includes('/* PICA_IMAGE_PIPELINE_V1 */')) {
+    appSource = replaceOnce(appSource, 'const MEDIA_THUMB_MAX_EDGE = 360;', 'const MEDIA_THUMB_MAX_EDGE = 540;', '前端缩略图尺寸常量');
+    appSource = replaceOnce(appSource, 'const MEDIA_THUMB_MAX_SIZE_MB = 0.12;', 'const MEDIA_THUMB_MAX_SIZE_MB = 0.18;', '前端缩略图体积常量');
+    appSource = replaceOnce(appSource, 'const MEDIA_THUMB_QUALITY = 0.72;', 'const MEDIA_THUMB_QUALITY = 0.82;', '前端缩略图质量常量');
+  }
+
+  let adminUiSource = usesLazyAdminClient ? adminClientSource : appSource;
+
+  const userClickPattern = /  document\.querySelectorAll\('\.admin-user-tile'\)\.forEach\(\(button\) => \{\r?\n    button\.onclick = async \(\) => \{[\s\S]*?\r?\n    \};\r?\n  \}\);/;
   const userClickReplacement = `  document.querySelectorAll('.admin-user-tile').forEach((button) => {
     button.onclick = () => {
       const studentUser = adminDashboardState.users.find((item) => item.id === button.dataset.id);
-      if (studentUser) openAdminUserDrawer(studentUser, date);
+      if (!studentUser) return;
+      startPhotoFlow('admin-checkin');
+      openAdminUserDrawer(studentUser, date);
     };
   });`;
-  appSource = replaceOnce(appSource, userClickPattern, userClickReplacement, '管理员用户卡片点击逻辑');
+  adminUiSource = replaceOnce(adminUiSource, userClickPattern, userClickReplacement, '管理员用户卡片点击逻辑');
 
   const drawerFunction = `${marker}
 const ADMIN_CHECKIN_CACHE_TTL_MS = 60_000;
@@ -93,15 +145,15 @@ function openAdminUserDrawer(studentUser, date) {
     recordsRoot.setAttribute('aria-busy', 'false');
     recordsRoot.innerHTML = records.length ? records.map((record) => {
       const images = Array.isArray(record.images) ? record.images : [];
-      const photos = images.map((media) => {
+      const photos = images.map((media, imageIndex) => {
         const thumbUrl = typeof media === 'string' ? media : media.thumbUrl || media.imageUrl || media.displayUrl;
         const displayUrl = typeof media === 'string' ? media : media.displayUrl || thumbUrl;
         if (!thumbUrl) return '';
         return \`<button type="button" class="image-viewer-trigger admin-checkin-photo"
           data-image-viewer="\${escapeHtml(thumbUrl)}" data-image-thumb="\${escapeHtml(thumbUrl)}"
           data-image-display="\${escapeHtml(displayUrl)}" data-image-alt="打卡照片">
-          <span class="image-shell"><img data-src="\${escapeHtml(thumbUrl)}" loading="lazy"
-            fetchpriority="low" decoding="async" width="540" height="405" alt="打卡照片"
+          <span class="image-shell"><img data-perf-image="admin-checkin-thumb" \${imageIndex === 0 ? 'src' : 'data-src'}="\${escapeHtml(thumbUrl)}" loading="\${imageIndex === 0 ? 'eager' : 'lazy'}"
+            fetchpriority="\${imageIndex === 0 ? 'high' : 'low'}" decoding="async" width="540" height="405" alt="打卡照片"
             onload="this.parentElement.classList.add('loaded')"
             onerror="this.hidden=true;this.parentElement.classList.add('failed')"><span class="image-error">图片加载失败，点击重试</span></span>
         </button>\`;
@@ -144,12 +196,19 @@ function openAdminUserDrawer(studentUser, date) {
   void load();
 }`;
 
-  appSource = replaceOnce(
-    appSource,
-    /function openAdminUserDrawer\([\s\S]*?\n\}\n\nfunction taskFormFields/,
+  adminUiSource = replaceOnce(
+    adminUiSource,
+    /(?:\/\* MOBILE_ADMIN_PHOTO_FIX_V1 \*\/\r?\nconst ADMIN_CHECKIN_CACHE_TTL_MS = 60_000;\r?\nconst adminCheckinViewCache = new Map\(\);\r?\nconst adminCheckinInflight = new Map\(\);\r?\n\r?\n)?function openAdminUserDrawer\([\s\S]*?\r?\n\}\r?\n\r?\nfunction taskFormFields/,
     `${drawerFunction}\n\nfunction taskFormFields`,
     '管理员用户打卡抽屉'
   );
+
+  if (usesLazyAdminClient) {
+    fs.writeFileSync(adminClientPath, adminUiSource, 'utf8');
+    console.log('Applied immediate cached check-in drawer to the lazy admin client.');
+    process.exit(0);
+  }
+  appSource = adminUiSource;
 
   const displayUploadBlock = `      const uploaded = await item.uploadPromise;
       if (current !== session) return;

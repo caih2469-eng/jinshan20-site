@@ -16,7 +16,9 @@ const replaceOnce = (source, search, replacement, label) => {
 {
   const { file, source } = read('scripts/student-admin-flow.template.js');
   if (!source.includes(marker)) {
-    const next = replaceOnce(source,
+    const alreadyAligned = source.includes('Number(effectiveTask.memberImageLimit || effectiveTask.imageLimit)')
+      && source.includes('Math.min(8, Math.max(1,');
+    const next = alreadyAligned ? source : replaceOnce(source,
       'const imageLimit = Math.max(1, Number(effectiveTask.memberImageLimit) || 1);',
       'const imageLimit = Math.max(1, Math.min(8, Number(effectiveTask.memberImageLimit || effectiveTask.imageLimit) || 1));',
       'member check-in image-limit source');
@@ -27,7 +29,9 @@ const replaceOnce = (source, search, replacement, label) => {
 {
   const { file, source } = read('cloudflare/routes/student.js');
   if (!source.includes(marker)) {
-    const next = replaceOnce(source,
+    const alreadyAligned = source.includes('Number(effectiveTask.memberImageLimit || effectiveTask.imageLimit)')
+      && source.includes('Math.min(8, Math.max(1,');
+    const next = alreadyAligned ? source : replaceOnce(source,
       'const imageLimit = Math.max(1, Number(effectiveTask.memberImageLimit) || 1);',
       'const imageLimit = Math.max(1, Math.min(8, Number(effectiveTask.memberImageLimit || effectiveTask.imageLimit) || 1));',
       'generated member check-in image-limit source');

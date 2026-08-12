@@ -5,6 +5,7 @@ on:
     branches:
       - perf/strict-p95-v4
       - perf/mobile-real-under-1s-v5
+      - fix/viewer-center-mainland-load700
   workflow_dispatch:
 
 permissions:
@@ -171,8 +172,18 @@ jobs:
             }
           }, null, 2));
           NODE
-      - name: Run strict 20-run Google Chrome p95 gate
-        run: node scripts/browser-strict-p95.mjs --base-url "$STRICT_P95_BASE_URL" --runs 20 --threshold-ms 1000
+      - name: Run strict Google Chrome p95 gate - round 1 of 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/browser-strict-p95.mjs --base-url "$STRICT_P95_BASE_URL" --runs 20 --threshold-ms 1000
+          cp reports/browser-strict-p95.json reports/browser-strict-p95-round-1.json
+      - name: Run strict Google Chrome p95 gate - round 2 of 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/browser-strict-p95.mjs --base-url "$STRICT_P95_BASE_URL" --runs 20 --threshold-ms 1000
+          cp reports/browser-strict-p95.json reports/browser-strict-p95-round-2.json
       - name: Run cold-cache Plaza first-image and quality gate
         run: node scripts/browser-plaza-mobile-preview.mjs --base-url "$STRICT_P95_BASE_URL"
       - name: Run Linux Chrome original-image centering gate
@@ -237,7 +248,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: browser-strict-p95-${{ github.run_id }}
-          path: reports/browser-strict-p95.json
+          path: |
+            reports/browser-strict-p95.json
+            reports/browser-strict-p95-round-1.json
+            reports/browser-strict-p95-round-2.json
           retention-days: 14
       - name: Upload cold-cache Plaza report
         if: always() && hashFiles('reports/browser-plaza-mobile-preview.json') != ''

@@ -13,8 +13,13 @@ const read = (relativePath) => {
 const write = (file, source) => fs.writeFileSync(file, source, 'utf8');
 const replaceOnce = (source, search, replacement, label) => {
   const next = source.replace(search, replacement);
-  if (next === source) throw new Error(`未找到${label}，已停止以避免误改`);
-  return next;
+  if (next !== source) return next;
+  if (typeof search === 'string') {
+    const windowsSearch = search.replaceAll('\n', '\r\n');
+    const windowsNext = source.replace(windowsSearch, replacement);
+    if (windowsNext !== source) return windowsNext;
+  }
+  throw new Error(`未找到${label}，已停止以避免误改`);
 };
 
 // The login-only student snapshot uses one D1 batch after password verification.
@@ -26,7 +31,10 @@ const replaceOnce = (source, search, replacement, label) => {
     let next = source;
     const taskReadOld = `  const [taskPage, makeupAllowed] = await Promise.all([\n    env.DB.prepare(\n      \`SELECT id,name,description,track_id AS trackId,starts_at AS startsAt,ends_at AS endsAt,\n              allow_late AS allowLate,image_limit AS imageLimit,copy_requirement AS copyRequirement,\n              submission_type AS submissionType,status,schedule_json AS scheduleJson\n         FROM tasks WHERE status='published' AND (?1='admin' OR track_id=?2)\n        ORDER BY starts_at DESC LIMIT 100\`\n    ).bind(user.role, user.trackId || '').all(),\n    user.role === 'student' ? hasMakeupPermission(env, user.id, today) : Promise.resolve(false)\n  ]);`;
     const taskReadNew = `  const taskPagePromise = options.taskPage\n    ? Promise.resolve(options.taskPage)\n    : env.DB.prepare(\n      \`SELECT id,name,description,track_id AS trackId,starts_at AS startsAt,ends_at AS endsAt,\n              allow_late AS allowLate,image_limit AS imageLimit,copy_requirement AS copyRequirement,\n              submission_type AS submissionType,status,schedule_json AS scheduleJson\n         FROM tasks WHERE status='published' AND (?1='admin' OR track_id=?2)\n        ORDER BY starts_at DESC LIMIT 100\`\n    ).bind(user.role, user.trackId || '').all();\n  const makeupPromise = options.makeupAllowed !== undefined\n    ? Promise.resolve(Boolean(options.makeupAllowed))\n    : (user.role === 'student' ? hasMakeupPermission(env, user.id, today) : Promise.resolve(false));\n  const [taskPage, makeupAllowed] = await Promise.all([taskPagePromise, makeupPromise]);`;
-    next = replaceOnce(next, taskReadOld, taskReadNew, 'login batch task preload');
+    if (next.includes(taskReadOld)) next = next.replace(taskReadOld, taskReadNew);
+    else if (!next.includes('const taskPagePromise = options.taskPage')) {
+      throw new Error('未找到login batch task preload，已停止以避免误改');
+    }
 
     const checkinsOld = `  const checkinsPromise = (team && taskIds.length)\n    ? (async () => {`;
     const checkinsNew = `  const checkinsPromise = Array.isArray(options.checkins)\n    ? Promise.resolve(options.checkins)\n    : (team && taskIds.length)\n      ? (async () => {`;
@@ -40,7 +48,7 @@ const replaceOnce = (source, search, replacement, label) => {
 
     next = replaceOnce(
       next,
-      `  const submissions = [];\n  if (taskIds.length && ownerPairs.length) {`,
+      /  const submissions = \[\];\r?\n  if \(taskIds\.length && ownerPairs\.length\) \{/,
       `  const submissions = Array.isArray(options.submissions) ? [...options.submissions] : [];\n  if (!Array.isArray(options.submissions) && taskIds.length && ownerPairs.length) {`,
       'login batch submission preload'
     );
@@ -111,7 +119,7 @@ const replaceOnce = (source, search, replacement, label) => {
     );
     next = replaceOnce(
       next,
-      `  return json({\n    token,\n    user: loginUser,\n    bootstrap\n  }, 200, {\n    'set-cookie': \`session_token=\${token}; Path=/; Max-Age=43200; HttpOnly; Secure; SameSite=Lax\`\n  });`,
+      /  return json\(\{\r?\n    token,\r?\n    user: loginUser,\r?\n    bootstrap\r?\n  \}, 200, \{\r?\n    'set-cookie': `session_token=\$\{token\}; Path=\/; Max-Age=43200; HttpOnly; Secure; SameSite=Lax`\r?\n  \}\);/,
       `  const serializeStartedAt = performance.now();\n  const response = json({\n    token,\n    user: loginUser,\n    bootstrap\n  }, 200, {\n    'set-cookie': \`session_token=\${token}; Path=/; Max-Age=43200; HttpOnly; Secure; SameSite=Lax\`\n  });\n  recordRequestTiming(request, 'login_serialize', performance.now() - serializeStartedAt);\n  return response;`,
       'login serialization timing'
     );
@@ -169,7 +177,7 @@ const replaceOnce = (source, search, replacement, label) => {
       '首页V2交接帮助函数位置'
     );
 
-    const networkBlock = /      const sessionRequest = fetch\('\/api\/session', \{([\s\S]*?)\n      \}\);\n      \/\/ The authenticated request is issued first; static public assets download in parallel while D1 builds the dashboard\.\n      queueMicrotask\(warmHomeAssets\);\n      const response = await sessionRequest;\n      if \(response\.status === 401 \|\| response\.status === 403\) \{\n        location\.replace\('\/entrance'\);\n        return;\n      \}\n      if \(!response\.ok\) throw new Error\('session unavailable'\);\n      const session = await response\.json\(\);\n      window\.__RECORD_PERF__\('bootstrap-session', \{\n        requestId: response\.headers\.get\('x-request-id'\) \|\| '',\n        status: response\.status,\n        duration: Math\.round\(\(performance\.now\(\) - bootstrapStarted\) \* 10\) \/ 10\n      \}\);/;
+    const networkBlock = /      const sessionRequest = fetch\('\/api\/session', \{([\s\S]*?)\r?\n      \}\);\r?\n      \/\/ The authenticated request is issued first; static public assets download in parallel while D1 builds the dashboard\.\r?\n      queueMicrotask\(warmHomeAssets\);\r?\n      const response = await sessionRequest;\r?\n      if \(response\.status === 401 \|\| response\.status === 403\) \{\r?\n        location\.replace\('\/entrance'\);\r?\n        return;\r?\n      \}\r?\n      if \(!response\.ok\) throw new Error\('session unavailable'\);\r?\n      const session = await response\.json\(\);\r?\n      window\.__RECORD_PERF__\('bootstrap-session', \{\r?\n        requestId: response\.headers\.get\('x-request-id'\) \|\| '',\r?\n        status: response\.status,\r?\n        duration: Math\.round\(\(performance\.now\(\) - bootstrapStarted\) \* 10\) \/ 10\r?\n      \}\);/;
     const match = next.match(networkBlock);
     if (!match) throw new Error('未找到V4首页session网络区块');
     const replacement = `      let session = consumeLoginBootstrapV2();\n      queueMicrotask(warmHomeAssets);\n      if (!session) {\n        const sessionRequest = fetch('/api/session', {${match[1]}\n        });\n        const response = await sessionRequest;\n        if (response.status === 401 || response.status === 403) {\n          location.replace('/entrance');\n          return;\n        }\n        if (!response.ok) throw new Error('session unavailable');\n        session = await response.json();\n        window.__RECORD_PERF__('bootstrap-session', {\n          source: 'network',\n          requestId: response.headers.get('x-request-id') || '',\n          status: response.status,\n          duration: Math.round((performance.now() - bootstrapStarted) * 10) / 10\n        });\n      } else {\n        window.__RECORD_PERF__('bootstrap-session', {\n          source: 'login-handoff-v2',\n          status: 200,\n          duration: Math.round((performance.now() - bootstrapStarted) * 10) / 10\n        });\n      }`;

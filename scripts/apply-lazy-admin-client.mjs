@@ -8,12 +8,26 @@ const start = 'async function adminComments(page = 1) {';
 const boot = 'if (window.__BOOTSTRAP_AUTHENTICATED__)';
 let app = fs.readFileSync(appPath, 'utf8');
 
+const compactStart = /\/\* ADMIN_DASHBOARD_REFACTOR_V1 \*\/\r?\nconst adminDashboardState = \{/g;
+const legacyStart = 'async function legacyAdmin(';
+const collapseRepeatedCompactBlocks = (source) => {
+  const adminStart = source.indexOf(start);
+  const finalAdmin = source.lastIndexOf('async function admin(selectedDate');
+  if (adminStart < 0 || finalAdmin < 0) return source;
+  const firstLegacy = source.indexOf(legacyStart, adminStart);
+  const lastLegacy = source.lastIndexOf(legacyStart, finalAdmin);
+  compactStart.lastIndex = lastLegacy;
+  const compact = compactStart.exec(source)?.index ?? -1;
+  if (firstLegacy < 0 || lastLegacy < firstLegacy || compact < lastLegacy || compact > finalAdmin) return source;
+  return `${source.slice(0, firstLegacy)}${source.slice(lastLegacy, finalAdmin)}${source.slice(finalAdmin)}`;
+};
+
 if (process.argv.includes('--restore')) {
   const loaderStart = app.indexOf(loaderMarker);
   if (loaderStart < 0) process.exit(0);
   const client = fs.readFileSync(clientPath, 'utf8');
   const clientStart = client.indexOf(clientMarker) + clientMarker.length;
-  const clientEnd = client.lastIndexOf('\n\nwindow.__ADMIN_CLIENT_RENDER__');
+  const clientEnd = client.lastIndexOf('window.__ADMIN_CLIENT_RENDER__');
   const bootStart = app.indexOf(boot, loaderStart);
   if (clientStart < clientMarker.length || clientEnd < clientStart || bootStart < 0) throw new Error('Incomplete lazy admin client boundaries.');
   app = `${app.slice(0, loaderStart).trimEnd()}\n\n${client.slice(clientStart, clientEnd).trim()}\n\n${app.slice(bootStart)}`
@@ -29,7 +43,12 @@ if (blockStart < 0) {
 }
 const bootStart = app.indexOf(boot, blockStart);
 if (bootStart < 0) throw new Error('Missing admin client boundary.');
-const admin = app.slice(blockStart, bootStart).trim();
+app = collapseRepeatedCompactBlocks(app);
+const compactCount = (app.match(/const adminDashboardState = \{/g) || []).length;
+if (compactCount !== 1) throw new Error(`Expected one compact admin dashboard before split, found ${compactCount}.`);
+const normalizedBootStart = app.indexOf(boot, blockStart);
+if (normalizedBootStart < 0) throw new Error('Missing normalized admin client boundary.');
+const admin = app.slice(blockStart, normalizedBootStart).trim();
 const loader = `${loaderMarker}
 let adminClientModulePromise = null;
 const loadAdminClient = (selectedDate, pageEpoch) => {
@@ -57,7 +76,7 @@ const loadAdminClient = (selectedDate, pageEpoch) => {
   return adminClientModulePromise.then(() => window.__ADMIN_CLIENT_RENDER__(selectedDate, pageEpoch));
 };
 `;
-app = `${app.slice(0, blockStart).trimEnd()}\n\n${loader}\n${app.slice(bootStart)}`
+app = `${app.slice(0, blockStart).trimEnd()}\n\n${loader}\n${app.slice(normalizedBootStart)}`
   .replace('return admin(undefined, pageEpoch);', 'return loadAdminClient(undefined, pageEpoch);');
 if (app.includes(start) || !app.includes(loaderMarker)) throw new Error('Admin client split failed.');
 fs.writeFileSync(clientPath, `${clientMarker}\n${admin}\n\nwindow.__ADMIN_CLIENT_RENDER__ = (selectedDate, pageEpoch) => admin(selectedDate, pageEpoch);\n`, 'utf8');

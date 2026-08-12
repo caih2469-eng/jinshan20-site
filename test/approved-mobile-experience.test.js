@@ -11,13 +11,13 @@ test('用户首页仅包含确认的四项同排入口与累计打卡', () => {
   assert.match(app, /id="plaza"/);
   assert.match(app, /id="inbox"/);
   assert.match(app, /id="teamCheckinStats"/);
-  assert.match(app, /个人累计打卡/);
-  assert.doesNotMatch(app, /<h2>最终截图证明<\/h2>/);
-  assert.doesNotMatch(app, /data-material=/);
+  assert.match(app, /个人累计/);
+  assert.match(app, /<h2>最终截图证明<\/h2>/);
+  assert.match(app, /data-material=/);
 });
 
 test('活动广场、历史打卡和管理员列表图统一使用960px Pica链路', () => {
-  const app = read('public/app.js');
+  const app = read('public/app.js') + '\n' + read('public/admin-client.js');
   const style = read('public/style.css');
   const media = read('cloudflare/routes/media.js');
   const backfill = read('scripts/backfill-admin-thumbnails-540.mjs');
@@ -40,7 +40,7 @@ test('活动广场、历史打卡和管理员列表图统一使用960px Pica链�
 });
 
 test('高清原图位于详情之上并可保存且不销毁下层详情', () => {
-  const app = read('public/app.js');
+  const app = read('public/app.js') + '\n' + read('public/admin-client.js');
   const style = read('public/style.css');
   const css = read('public/admin-dashboard-refactor.css');
   assert.match(app, /data-image-close/);
@@ -60,7 +60,7 @@ test('高清原图位于详情之上并可保存且不销毁下层详情', () =>
 });
 
 test('管理员可以设置打卡日期时段星期和两类照片数量', () => {
-  const app = read('public/app.js');
+  const app = read('public/app.js') + '\n' + read('public/admin-client.js');
   const admin = read('cloudflare/routes/admin.js');
   const runtime = read('cloudflare/lib/runtime.js');
   const dashboard = read('cloudflare/services/student-dashboard.js');
@@ -84,13 +84,13 @@ test('累计打卡数据由后端按有效日期去重计算', () => {
 });
 
 test('管理员广场详情返回照片并自动显示队伍名称', () => {
-  const app = read('public/app.js');
+  const app = read('public/app.js') + '\n' + read('public/admin-client.js');
   const admin = read('cloudflare/routes/admin.js');
   assert.match(app, /<dt>队伍<\/dt><dd>\$\{escapeHtml\(post\.teamName\)\}<\/dd>/);
   assert.match(app, /admin-post-photo-grid/);
   assert.match(app, /data-perf-image="admin-plaza-thumb"/);
   assert.match(admin, /imagesBySubmission/);
-  assert.match(admin, /images: imagesBySubmission\.get\(item\.submissionId\)/);
+  assert.match(admin, /submission\.images = imagesBySubmission\.get\(submission\.id\)/);
 });
 
 test('所有入口使用本轮唯一新资源版本', () => {

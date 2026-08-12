@@ -1,3 +1,5 @@
+/* TRACK_AWARE_ADMIN_SETTINGS_V1 */
+/* APPROVED_MOBILE_EXPERIENCE_BACKEND_V1 */
 import {
   audit,
   cleanText,
@@ -1228,6 +1230,91 @@ export const handleAdminRoutes = async (request, env, ctx, url) => {
     statements.push(audit(env, admin, 'switches', 'config'));
     await env.DB.batch(statements);
     return json({ ok: true, config: await readConfig(env) });
+  }
+
+  if (route === '/api/admin/checkin-settings' && request.method === 'GET') {
+    const current = await readConfig(env);
+    const trackId = ['health', 'interaction'].includes(url.searchParams.get('track'))
+      ? url.searchParams.get('track') : 'interaction';
+    return json({
+      trackId,
+      settings: trackId === 'health' ? current.healthCheckinSettings : current.checkinSettings
+    });
+  }
+
+  if (route === '/api/admin/checkin-settings' && request.method === 'PUT') {
+    const body = await readJson(request);
+    const trackId = body.trackId === 'health' ? 'health' : 'interaction';
+    const activeStartDate = cleanText(body.activeStartDate, 10);
+    const activeEndDate = cleanText(body.activeEndDate, 10);
+    const weekdays = Array.isArray(body.weekdays)
+      ? [...new Set(body.weekdays.map(Number).filter((day) => day >= 1 && day <= 7))].sort((a, b) => a - b)
+      : [];
+    const personalImageLimit = Math.min(8, Math.max(1, Number(body.personalImageLimit || 1)));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(activeStartDate)
+        || !/^\d{4}-\d{2}-\d{2}$/.test(activeEndDate)
+        || activeStartDate > activeEndDate) {
+      return json({ error: '活动开始和结束日期无效' }, 400);
+    }
+    if (!weekdays.length) return json({ error: '至少选择一个允许打卡的星期' }, 400);
+    const current = await readConfig(env);
+    if (trackId === 'health') {
+      const slotLabels = { breakfast: '早餐', lunch: '午餐', dinner: '晚餐' };
+      const slots = ['breakfast', 'lunch', 'dinner'].map((id) => {
+        const source = Array.isArray(body.slots) ? body.slots.find((item) => item?.id === id) : null;
+        return {
+          id,
+          label: slotLabels[id],
+          start: cleanText(source?.start, 5),
+          end: cleanText(source?.end, 5)
+        };
+      });
+      if (slots.some((slot) => !/^([01]\d|2[0-3]):[0-5]\d$/.test(slot.start)
+          || !/^([01]\d|2[0-3]):[0-5]\d$/.test(slot.end) || slot.start >= slot.end)) {
+        return json({ error: '早餐、午餐或晚餐时段无效' }, 400);
+      }
+      const settings = {
+        enabled: body.enabled !== false,
+        activeStartDate,
+        activeEndDate,
+        weekdays,
+        personalImageLimit,
+        slots
+      };
+      const trackEnabled = { ...current.trackEnabled, health: settings.enabled };
+      await env.DB.batch([
+        putConfig(env, 'healthCheckinSettings', settings),
+        putConfig(env, 'startDate', activeStartDate),
+        putConfig(env, 'endDate', activeEndDate),
+        putConfig(env, 'slots', slots),
+        putConfig(env, 'trackEnabled', trackEnabled),
+        ...(settings.enabled && !current.activityEnabled ? [putConfig(env, 'activityEnabled', true)] : []),
+        audit(env, admin, 'update', 'checkin_settings', 'health', settings)
+      ]);
+      return json({ ok: true, trackId, settings });
+    }
+    const dailyStart = cleanText(body.dailyStart, 5);
+    const dailyEnd = cleanText(body.dailyEnd, 5);
+    const teamImageLimit = Math.min(8, Math.max(1, Number(body.teamImageLimit || 1)));
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(dailyStart)
+        || !/^([01]\d|2[0-3]):[0-5]\d$/.test(dailyEnd) || dailyStart >= dailyEnd) {
+      return json({ error: '每日打卡时间无效' }, 400);
+    }
+    const settings = {
+      enabled: body.enabled !== false,
+      activeStartDate,
+      activeEndDate,
+      dailyStart,
+      dailyEnd,
+      weekdays,
+      personalImageLimit,
+      teamImageLimit
+    };
+    await env.DB.batch([
+      putConfig(env, 'checkinSettings', settings),
+      audit(env, admin, 'update', 'checkin_settings', 'interaction', settings)
+    ]);
+    return json({ ok: true, trackId, settings });
   }
 
   if (route === '/api/admin/config' && request.method === 'PUT') {

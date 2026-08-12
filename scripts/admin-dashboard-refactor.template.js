@@ -10,6 +10,8 @@ const adminDashboardState = {
   openPanel: sessionStorage.getItem('adminCompactPanel') || '',
   teamTab: sessionStorage.getItem('adminTeamTab') || 'manual',
   userTab: sessionStorage.getItem('adminUserTab') || 'single',
+  userTrack: ['health', 'interaction'].includes(sessionStorage.getItem('adminUserTrack'))
+    ? sessionStorage.getItem('adminUserTrack') : 'health',
   requestEpoch: 0
 };
 
@@ -63,8 +65,11 @@ const renderAdminUserPanel = (completion, result, date) => {
   if (!target) return;
   adminDashboardState.users = result.users;
   adminDashboardState.userSummary = completion;
-  const completed = Number(completion.overall?.completed || 0);
-  const total = Number(completion.overall?.total || 0);
+  const selectedTrack = adminDashboardState.userTrack;
+  const selectedTrackLabel = selectedTrack === 'health' ? '健康自律赛道' : '四校区赛道';
+  const selectedTrackSummary = completion.tracks?.find((item) => item.trackId === selectedTrack) || {};
+  const completed = Number(selectedTrackSummary.completed || 0);
+  const total = Number(selectedTrackSummary.total || 0);
   const missing = Math.max(0, total - completed);
   const tiles = result.users.map((studentUser, index) => `
     <button class="admin-user-tile ${studentUser.completed ? 'completed' : 'missing'}" data-id="${studentUser.id}">
@@ -74,7 +79,7 @@ const renderAdminUserPanel = (completion, result, date) => {
     </button>`).join('');
   target.innerHTML = `
     <div class="admin-user-heading">
-      <div><h2>全部赛道用户</h2><p class="muted">点击姓名查看当天记录或进行补卡</p></div>
+      <div><h2>${selectedTrackLabel}</h2><p class="muted">点击姓名查看当天记录或进行补卡</p></div>
       <label>日期 <input id="adminCompactDate" type="date" value="${date}"></label>
     </div>
     <div class="admin-user-overview" aria-label="用户完成概览">
@@ -86,6 +91,10 @@ const renderAdminUserPanel = (completion, result, date) => {
       <input name="query" value="${escapeHtml(adminUserQuery)}" placeholder="搜索姓名或学号" aria-label="搜索姓名或学号">
       <button>搜索</button>
     </form>
+    <div class="user-track-tabs" role="tablist" aria-label="用户赛道筛选">
+      <button type="button" role="tab" class="secondary track-filter ${selectedTrack === 'health' ? 'active' : ''}" data-track-filter="health" aria-selected="${selectedTrack === 'health'}">健康自律赛道</button>
+      <button type="button" role="tab" class="secondary track-filter ${selectedTrack === 'interaction' ? 'active' : ''}" data-track-filter="interaction" aria-selected="${selectedTrack === 'interaction'}">四校区赛道</button>
+    </div>
     <div class="user-filter-tabs" role="group" aria-label="完成状态筛选">
       ${[['all','全部用户'],['completed','已完成'],['missing','未完成']].map(([value,label]) =>
         `<button type="button" class="secondary user-filter ${adminUserFilter === value ? 'active' : ''}" data-filter="${value}">${label}</button>`).join('')}
@@ -112,6 +121,15 @@ const renderAdminUserPanel = (completion, result, date) => {
     sessionStorage.adminUserPage = '1';
     refreshCompactAdminUsers(date);
   };
+  document.querySelectorAll('.track-filter').forEach((button) => {
+    button.onclick = () => {
+      adminDashboardState.userTrack = button.dataset.trackFilter;
+      sessionStorage.setItem('adminUserTrack', adminDashboardState.userTrack);
+      adminUserPage = 1;
+      sessionStorage.adminUserPage = '1';
+      refreshCompactAdminUsers(date);
+    };
+  });
   document.querySelectorAll('.user-filter').forEach((button) => {
     button.onclick = () => {
       adminUserFilter = button.dataset.filter;
@@ -132,24 +150,11 @@ const renderAdminUserPanel = (completion, result, date) => {
     refreshCompactAdminUsers(date);
   };
   document.querySelectorAll('.admin-user-tile').forEach((button) => {
-    button.onclick = async () => {
-      const restore = beginButtonLoading(button, '加载中…');
-      try {
-        const [teams, tasks] = await Promise.all([
-          loadCompactAdminTeams(),
-          api('/api/admin/tasks')
-        ]);
-        openAdminUserDrawer(
-          adminDashboardState.users.find((item) => item.id === button.dataset.id),
-          teams.teams,
-          date,
-          tasks.tasks
-        );
-      } catch (error) {
-        alert(error.message);
-      } finally {
-        restore();
-      }
+    button.onclick = () => {
+      const studentUser = adminDashboardState.users.find((item) => item.id === button.dataset.id);
+      if (!studentUser) return;
+      startPhotoFlow('admin-checkin');
+      openAdminUserDrawer(studentUser, date);
     };
   });
 };
@@ -162,7 +167,7 @@ async function refreshCompactAdminUsers(date = adminDashboardState.date) {
   try {
     const [completion, result] = await Promise.all([
       api(`/api/admin/completion-summary?date=${date}`),
-      api(`/api/admin/users?page=${adminUserPage}&limit=30&q=${encodeURIComponent(adminUserQuery)}&completion=${adminUserFilter}&date=${date}`)
+      api(`/api/admin/users?page=${adminUserPage}&limit=30&q=${encodeURIComponent(adminUserQuery)}&completion=${adminUserFilter}&track=${adminDashboardState.userTrack}&date=${date}`)
     ]);
     if (epoch !== adminDashboardState.requestEpoch || !document.querySelector('#adminUserCore')) return;
     renderAdminUserPanel(completion, result, date);

@@ -6,8 +6,13 @@ const file = path.join(root, 'cloudflare/services/student-dashboard.js');
 const marker = '/* STRICT_P95_DASHBOARD_BATCH_V4 */';
 const replaceOnce = (source, search, replacement, label) => {
   const next = source.replace(search, replacement);
-  if (next === source) throw new Error(`未找到${label}，已停止以避免误改`);
-  return next;
+  if (next !== source) return next;
+  if (typeof search === 'string') {
+    const windowsSearch = search.replaceAll('\n', '\r\n');
+    const windowsNext = source.replace(windowsSearch, replacement);
+    if (windowsNext !== source) return windowsNext;
+  }
+  throw new Error(`未找到${label}，已停止以避免误改`);
 };
 
 let source = fs.readFileSync(file, 'utf8');
@@ -18,7 +23,11 @@ if (!source.includes(marker)) {
 
   const taskQueryOld = `  const { results } = await env.DB.prepare(\n    \`SELECT id,name,description,track_id AS trackId,starts_at AS startsAt,ends_at AS endsAt,\n            allow_late AS allowLate,image_limit AS imageLimit,copy_requirement AS copyRequirement,\n            submission_type AS submissionType,status,schedule_json AS scheduleJson\n       FROM tasks WHERE status='published' AND (?1='admin' OR track_id=?2)\n      ORDER BY starts_at DESC LIMIT 100\`\n  ).bind(user.role, user.trackId || '').all();\n  const today = options.date || shanghaiDate();\n  const makeupAllowed = user.role === 'student'\n    ? await hasMakeupPermission(env, user.id, today) : false;`;
   const taskQueryNew = `  const today = options.date || shanghaiDate();\n  const [taskPage, makeupAllowed] = await Promise.all([\n    env.DB.prepare(\n      \`SELECT id,name,description,track_id AS trackId,starts_at AS startsAt,ends_at AS endsAt,\n              allow_late AS allowLate,image_limit AS imageLimit,copy_requirement AS copyRequirement,\n              submission_type AS submissionType,status,schedule_json AS scheduleJson\n         FROM tasks WHERE status='published' AND (?1='admin' OR track_id=?2)\n        ORDER BY starts_at DESC LIMIT 100\`\n    ).bind(user.role, user.trackId || '').all(),\n    user.role === 'student' ? hasMakeupPermission(env, user.id, today) : Promise.resolve(false)\n  ]);\n  const results = taskPage.results || [];`;
-  source = replaceOnce(source, taskQueryOld, taskQueryNew, '任务与补签权限并行区块');
+  if (source.includes(taskQueryOld)) {
+    source = source.replace(taskQueryOld, taskQueryNew);
+  } else {
+    throw new Error('未找到任务与补签权限并行区块，已停止以避免误改');
+  }
 
   source = replaceOnce(
     source,
@@ -57,11 +66,35 @@ if (!source.includes(marker)) {
 
   const statsOld = `const buildCheckinStats = async (env, user, teamSummary) => {\n  const personal = user.trackId === 'health'\n    ? await env.DB.prepare("SELECT COUNT(DISTINCT checkin_date) AS total FROM checkins WHERE user_id=?1 AND status!='rejected'").bind(user.id).first()\n    : await env.DB.prepare("SELECT COUNT(DISTINCT occurrence_date) AS total FROM member_checkins WHERE user_id=?1 AND status!='rejected'").bind(user.id).first();\n  let teamDays = 0;\n  if (teamSummary?.team?.id) {\n    const team = await env.DB.prepare(\n      "SELECT COUNT(DISTINCT COALESCE(NULLIF(occurrence_date,''),substr(submitted_at,1,10))) AS total FROM task_submissions WHERE owner_type='team' AND owner_id=?1 AND status IN ('submitted','approved')"\n    ).bind(teamSummary.team.id).first();\n    teamDays = Number(team?.total || 0);\n  }\n  return { personalDays: Number(personal?.total || 0), teamDays };\n};`;
   const statsNew = `const buildCheckinStats = async (env, user, teamSummary) => {\n  const personalPromise = user.trackId === 'health'\n    ? env.DB.prepare("SELECT COUNT(DISTINCT checkin_date) AS total FROM checkins WHERE user_id=?1 AND status!='rejected'").bind(user.id).first()\n    : env.DB.prepare("SELECT COUNT(DISTINCT occurrence_date) AS total FROM member_checkins WHERE user_id=?1 AND status!='rejected'").bind(user.id).first();\n  const teamPromise = teamSummary?.team?.id\n    ? env.DB.prepare(\n      "SELECT COUNT(DISTINCT COALESCE(NULLIF(occurrence_date,''),substr(submitted_at,1,10))) AS total FROM task_submissions WHERE owner_type='team' AND owner_id=?1 AND status IN ('submitted','approved')"\n    ).bind(teamSummary.team.id).first()\n    : Promise.resolve(null);\n  const [personal, team] = await Promise.all([personalPromise, teamPromise]);\n  return { personalDays: Number(personal?.total || 0), teamDays: Number(team?.total || 0) };\n};`;
-  source = replaceOnce(source, statsOld, statsNew, '累计打卡并行统计区块');
+  if (source.includes(statsOld)) source = source.replace(statsOld, statsNew);
+  else if (!source.includes('const [personal, team] = await Promise.all([personalPromise, teamPromise]);')) {
+    throw new Error('未找到累计打卡并行统计区块，已停止以避免误改');
+  }
 
   const dashboardOld = `export const buildStudentDashboard = async (env, user, options = {}) => {\n  const date = options.date || shanghaiDate();\n  const config = options.config || await readConfig(env);\n  const [teamSummary, taskResult] = await Promise.all([\n    buildTeamSummary(env, user, config),\n    buildStudentTasks(env, user, { config, date })\n  ]);\n  const checkinStats = await buildCheckinStats(env, user, teamSummary);`;
   const dashboardNew = `export const buildStudentDashboard = async (env, user, options = {}) => {\n  const date = options.date || shanghaiDate();\n  const [config, teamContext] = await Promise.all([\n    options.config ? Promise.resolve(options.config) : readConfig(env),\n    options.teamContext ? Promise.resolve(options.teamContext) : buildStudentTeamContext(env, user)\n  ]);\n  const teamSummary = await buildTeamSummary(env, user, config, { teamContext });\n  const [taskResult, checkinStats] = await Promise.all([\n    buildStudentTasks(env, user, { config, date, teamContext, includeImages: false }),\n    buildCheckinStats(env, user, teamSummary)\n  ]);`;
-  source = replaceOnce(source, dashboardOld, dashboardNew, '最终学生Dashboard并行聚合区块');
+  if (source.includes(dashboardOld)) {
+    source = source.replace(dashboardOld, dashboardNew);
+  } else {
+    source = replaceOnce(
+      source,
+      /export const buildStudentDashboard = async \(env, user, options = \{\}\) => \{[\s\S]*?\n  return \{/,
+      `export const buildStudentDashboard = async (env, user, options = {}) => {
+  const date = options.date || shanghaiDate();
+  const [config, teamContext] = await Promise.all([
+    options.config ? Promise.resolve(options.config) : readConfig(env),
+    options.teamContext ? Promise.resolve(options.teamContext) : buildStudentTeamContext(env, user)
+  ]);
+  const teamSummary = await buildTeamSummary(env, user, config, { teamContext });
+  const [taskResult, materialTasks, checkinStats] = await Promise.all([
+    buildStudentTasks(env, user, { config, date, teamContext, includeImages: false }),
+    buildStudentMaterialTasks(env, user),
+    buildCheckinStats(env, user, teamSummary)
+  ]);
+  return {`,
+      '最终学生Dashboard并行聚合区块'
+    );
+  }
 
   fs.writeFileSync(file, source, 'utf8');
 }

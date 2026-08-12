@@ -38,7 +38,11 @@ test('入口页不加载主应用，登录脚本具备移动端降级、防重�
   const entrance = fs.readFileSync('public/entrance.js', 'utf8');
   const app = fs.readFileSync('public/app.js', 'utf8');
   const worker = fs.readFileSync('cloudflare/worker.js', 'utf8');
-  assert.doesNotMatch(html, /\bapp\.js\b/);
+  assert.doesNotMatch(html, /<script[^>]+src=["'][^"']*(?:\/app\.js|\/bootstrap\.js)/i);
+  if (/\bapp\.js\b/.test(html) || /\bbootstrap\.js\b/.test(html)) {
+    assert.match(html, /LOGIN_HOME_PREFETCH_V2/);
+    assert.match(html, /<link[^>]+rel=["']prefetch["'][^>]+href=["'][^"']*\/(?:app|bootstrap)\.js/i);
+  }
   assert.match(html, /\bentrance\.js\b/);
   assert.doesNotMatch(html, /\.ttf(?:[?"'])/i);
   assert.match(html, /font-display:\s*swap/i);
@@ -74,7 +78,8 @@ test('图片列表在SQL层分页，首屏不超过20张且管理员每页不超
   const student = fs.readFileSync('cloudflare/routes/student.js', 'utf8');
   const app = fs.readFileSync('public/app.js', 'utf8');
   assert.match(plaza, /Math\.min\(20/);
-  assert.match(plaza, /LIMIT \?\$\{params\.length - 1\} OFFSET \?\$\{params\.length\}/);
+  assert.match(plaza, /ORDER BY \$\{order\} LIMIT \?4 OFFSET \?5/);
+  assert.match(plaza, /env\.DB\.prepare\(query\)\.bind\(user\.id, searchLike, monthValue, limit, \(page - 1\) \* limit\)/);
   assert.match(admin, /Math\.min\(30/);
   assert.match(admin, /ORDER BY u\.name,u\.student_id LIMIT \?4 OFFSET \?5/);
   assert.match(student, /Math\.min\(20/);
@@ -82,7 +87,7 @@ test('图片列表在SQL层分页，首屏不超过20张且管理员每页不超
   assert.match(app, /IntersectionObserver/);
   assert.match(app, /data-src=/);
   assert.match(app, /limit=20/);
-  assert.doesNotMatch(`${plaza}\n${admin}\n${student}`, /data:image\/[^;]+;base64/i);
+  assert.doesNotMatch(plaza + '\n' + admin + '\n' + student, /data:image\/[^;]+;base64/i);
   assert.match(admin, /IN \('task:thumb','admin-makeup:thumb'\)/);
   assert.match(student, /IN \('member-checkin:thumb','admin-makeup:thumb'\)/);
   assert.match(admin, /COALESCE\(m\.object_key,i\.object_key\) AS objectKey/);
@@ -170,20 +175,21 @@ test('未发布图片公共接口404且不缓存；可见图片返回WebP并在�
 });
 
 
-test('二次提速参数前后端一致，并复用已加载缩略图', () => {
+test('Pica图片参数前后端一致，并复用已加载缩略图', () => {
   const app = fs.readFileSync('public/app.js', 'utf8');
   const media = fs.readFileSync('cloudflare/routes/media.js', 'utf8');
-  assert.match(app, /MEDIA_THUMB_MAX_EDGE = 360/);
-  assert.match(app, /MEDIA_PLAZA_THUMB_MAX_EDGE = 640/);
-  assert.match(app, /MEDIA_DISPLAY_MAX_EDGE = 960/);
-  assert.match(app, /MEDIA_THUMB_QUALITY = 0\.72/);
-  assert.match(app, /MEDIA_PLAZA_THUMB_QUALITY = 0\.84/);
-  assert.match(app, /MEDIA_DISPLAY_QUALITY = 0\.78/);
+  assert.match(app, /PICA_THUMB_MAX_EDGE = 960/);
+  assert.match(app, /PICA_DISPLAY_MAX_EDGE = 2048/);
+  assert.match(app, /PICA_THUMB_MAX_BYTES = 491520/);
+  assert.match(app, /PICA_DISPLAY_MAX_BYTES = 1468006/);
+  assert.match(app, /quality: screenshotLike \? 0\.92 : 0\.88/);
+  assert.match(app, /quality: screenshotLike \? 0\.94 : 0\.90/);
+  assert.match(app, /prepareImageVariantsMeasured\((?:sourceFile|selected\[index\])/);
   assert.match(app, /renderedImage\?\.complete/);
   assert.match(app, /await displayImage\.decode\(\)/);
-  assert.match(media, /THUMB_MAX_EDGE = 360/);
-  assert.match(media, /PLAZA_THUMB_MAX_EDGE = 640/);
-  assert.match(media, /DISPLAY_MAX_EDGE = 960/);
+  assert.match(media, /THUMB_MAX_EDGE = 960/);
+  assert.match(media, /PLAZA_THUMB_MAX_EDGE = 960/);
+  assert.match(media, /DISPLAY_MAX_EDGE = 2048/);
   assert.doesNotMatch(media, /variant === 'thumb' \? 480 : 1280/);
 });
 

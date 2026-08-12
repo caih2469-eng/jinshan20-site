@@ -14,16 +14,24 @@ const replaceIfPresent = (source, search, replacement) => (
   source.includes(search) ? source.replace(search, replacement) : source
 );
 
+// The mobile Plaza/layout generators run after the earlier approved-prefetch
+// layer and rebuild the detail function. Re-apply the cache/inflight detail
+// fast path here so V5 validates the final runtime instead of an overwritten
+// intermediate artifact.
+await import('./apply-plaza-detail-fast-path.mjs');
+
 const patchPlazaPage = (source, label) => {
-  if (source.includes(marker)) return source;
   if (!source.includes('/* PLAZA_PERFORMANCE_QUALITY_V3 */')) {
     throw new Error(`${label}缺少活动广场V3基线`);
   }
 
-  let next = source.replace(
-    '/* PLAZA_PERFORMANCE_QUALITY_V3 */',
-    `/* PLAZA_PERFORMANCE_QUALITY_V3 */\n${marker}`
-  );
+  let next = source;
+  if (!next.includes(marker)) {
+    next = next.replace(
+      '/* PLAZA_PERFORMANCE_QUALITY_V3 */',
+      `/* PLAZA_PERFORMANCE_QUALITY_V3 */\n${marker}`
+    );
+  }
 
   const eagerResponsive = [
     `              ${'${'}cardIndex < 4`,
@@ -42,7 +50,7 @@ const patchPlazaPage = (source, label) => {
 
 {
   const { file, source } = read('public/app.js');
-  let next = patchPlazaPage(source, '主应用');
+  let next = patchPlazaPage(source.replace(/\r\n/g, '\n'), '主应用');
 
   const deferredPrefetch = [
     '  /* STRICT_P95_APP_PREFETCH_V4 */',
@@ -86,6 +94,18 @@ const patchPlazaPage = (source, label) => {
   next = replaceIfPresent(next, oneLowPriorityThumb, fourThumbWarmup);
   next = next.replace('        hasFirstImage: Boolean(firstUrl),', '        hasFirstImage: Boolean(preloadImages.length),');
 
+  const firstDetailThumb = `            ${'${'}imageIndex === 0 ? 'src' : 'data-src'}="${'${'}escapeHtml(image.thumbUrl || image.imageUrl)}" alt="活动图片"`;
+  const responsiveDetailThumb = [
+    `            ${'${'}imageIndex === 0`,
+    `              ? \`src="${'${'}escapeHtml(image.thumbUrl || image.imageUrl)}" srcset="${'${'}escapeHtml(image.thumbUrl || image.imageUrl)} 960w, ${'${'}escapeHtml(image.displayUrl || image.imageUrl)} 2048w" sizes="(max-width: 720px) 100vw, 720px"\``,
+    `              : \`data-src="${'${'}escapeHtml(image.thumbUrl || image.imageUrl)}"\`} alt="活动图片"`
+  ].join('\n');
+  next = replaceIfPresent(next, firstDetailThumb, responsiveDetailThumb);
+
+  const previewThumb = `src="${'${'}escapeHtml(previewImage.thumbUrl || previewImage.imageUrl)}" alt="活动图片"`;
+  const responsivePreviewThumb = `src="${'${'}escapeHtml(previewImage.thumbUrl || previewImage.imageUrl)}" srcset="${'${'}escapeHtml(previewImage.thumbUrl || previewImage.imageUrl)} 960w, ${'${'}escapeHtml(previewImage.displayUrl || previewImage.imageUrl)} 2048w" sizes="(max-width: 720px) 100vw, 720px" alt="活动图片"`;
+  next = replaceIfPresent(next, previewThumb, responsivePreviewThumb);
+
   const eagerDisplayWarmup = [
     '  post.images.slice(0, 2).forEach((image, imageIndex) => {',
     '    const displayUrl = buildMediaUrl(image.displayUrl || image.imageUrl || image.thumbUrl);',
@@ -111,20 +131,41 @@ const patchPlazaPage = (source, label) => {
     '  else setTimeout(warmDisplayImages, 1200);'
   ].join('\n');
   next = replaceIfPresent(next, eagerDisplayWarmup, deferredDisplayWarmup);
+  if (!next.includes('const warmDisplayImages = () => {')) {
+    const detailVisibleAnchor = [
+      '  prepareDynamicContent(root);',
+      "  root.querySelector('#closePost').onclick = closePost;",
+      "  recordPerf('plaza-detail-visible', {"
+    ].join('\n');
+    const detailVisibleWithWarmup = [
+      '  prepareDynamicContent(root);',
+      "  root.querySelector('#closePost').onclick = closePost;",
+      deferredDisplayWarmup,
+      "  recordPerf('plaza-detail-visible', {"
+    ].join('\n');
+    next = replaceIfPresent(next, detailVisibleAnchor, detailVisibleWithWarmup);
+  }
 
   if (!next.includes(marker)
       || !next.includes('void startPlazaPrefetch();')
       || !next.includes("preload.fetchPriority = index < 2 ? 'high' : 'auto';")
       || !next.includes("preload.fetchPriority = 'low';")
       || !next.includes('2048w')) {
-    throw new Error('主应用V5活动广场运行时生成不完整');
+    const missing = [
+      [marker, 'V5 marker'],
+      ['void startPlazaPrefetch();', 'immediate Plaza prefetch'],
+      ["preload.fetchPriority = index < 2 ? 'high' : 'auto';", 'first-card thumbnail warmup'],
+      ["preload.fetchPriority = 'low';", 'deferred display warmup'],
+      ['2048w', '2048px quality source']
+    ].filter(([needle]) => !next.includes(needle)).map(([, name]) => name);
+    throw new Error(`主应用V5活动广场运行时生成不完整：${missing.join('、')}`);
   }
   write(file, next);
 }
 
 {
   const { file, source } = read('templates/plaza-mobile-page.txt');
-  const next = patchPlazaPage(source, '活动广场模板');
+  const next = patchPlazaPage(source.replace(/\r\n/g, '\n'), '活动广场模板');
   if (!next.includes(marker)) throw new Error('活动广场模板V5标记缺失');
   write(file, next);
 }

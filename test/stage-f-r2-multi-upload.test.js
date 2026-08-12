@@ -89,7 +89,10 @@ test('阶段F：多图并发受控，失败图可单独重试且成功图不重�
   assert.match(appSource, /return isIOS \|\| embeddedBrowser \|\| lowMemory \? 1 : 2;/);
   const sessionBlock = functionBlock('const createMediaUploadSession', 'const readFiles');
   assert.match(sessionBlock, /if \(session\.results\[index\]\) return;/);
-  assert.match(sessionBlock, /let display = session\.partial\[index\]\?\.display;/);
+  assert.match(sessionBlock, /let prepared = session\.partial\[index\]\?\.prepared;/);
+  assert.match(sessionBlock, /let pair = session\.partial\[index\]\?\.pair;/);
+  assert.match(sessionBlock, /session\.partial\[index\] = \{ prepared, pair \};/);
+  assert.match(sessionBlock, /session\.results\[index\] = \{ \.\.\.pair\.display, thumbMediaId: pair\.thumb\.mediaId \};/);
   assert.match(sessionBlock, /const indexes = \[\.\.\.session\.errors\.keys\(\)\];/);
   assert.match(sessionBlock, /Math\.min\(uploadConcurrency\(\), indexes\.length\)/);
   assert.match(sessionBlock, /第 \$\{failed\} 张图片处理失败，可单独重试失败图片。/);

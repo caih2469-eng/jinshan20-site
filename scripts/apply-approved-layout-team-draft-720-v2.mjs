@@ -68,23 +68,19 @@ const approvedCss = readTemplate('approved-layout-team-draft-720.css');
     next = replaceOnce(next, '<div class="image-preview" id="taskPreview"></div>', existingImagesFragment, '草稿已保存图片回填');
     next = replaceOnce(next, "  const form = document.querySelector('#taskSend');", "  const form = document.querySelector('#taskSend');\n  prepareDynamicContent(app);", '队伍草稿图片交互绑定');
 
-    const oldPlazaField = "      ${user.trackId === 'interaction' ? `<label class=\"check-label\"><input name=\"isPublic\" type=\"checkbox\" ${current?.isPublic ? 'checked' : ''}> 同意发布至活动广场</label>\n      <div id=\"plazaCopyField\" style=\"display:${current?.isPublic ? 'block' : 'none'}\"><label>广场作品文案（发布时必填）</label><textarea name=\"plazaCopy\">${escapeHtml(current?.plazaCopy || '')}</textarea></div>` : ''}";
+    const oldPlazaField = /      \$\{user\.trackId === 'interaction' \? `<label class="check-label"><input name="isPublic" type="checkbox" \$\{current\?\.isPublic \? 'checked' : ''\}>[^\n]*<\/label>\r?\n      <div id="plazaCopyField"[\s\S]*?<\/div>` : ''\}/;
     const newPlazaField = "      ${user.trackId === 'interaction' ? `<label class=\"check-label\"><input name=\"isPublic\" type=\"checkbox\" ${current?.isPublic ? 'checked' : ''}> 同意发布至活动广场</label>` : ''}";
     next = replaceOnce(next, oldPlazaField, newPlazaField, '删除广场二次文案字段');
     next = replaceOnce(
       next,
-      "  if (form.isPublic) form.isPublic.onchange = () => {\n    document.querySelector('#plazaCopyField').style.display = form.isPublic.checked ? 'block' : 'none';\n  };\n",
+      /  if \(form\.isPublic\) form\.isPublic\.onchange = \(\) => \{\r?\n    document\.querySelector\('#plazaCopyField'\)\.style\.display = form\.isPublic\.checked \? 'block' : 'none';\r?\n  \};\r?\n/,
       '',
       '删除广场二次文案显示事件'
     );
     next = next.replaceAll("plazaCopy: form.plazaCopy?.value || ''", 'plazaCopy: form.copy.value');
 
-    next = replaceOnce(
-      next,
-      '<div class="admin-compact-list">${result.posts.map(compactPostRow).join(\'\') || \'<p class="muted">暂无广场帖子</p>\'}</div>',
-      '<div class="admin-post-grid">${result.posts.map(compactPostRow).join(\'\') || \'<p class="muted">暂无广场帖子</p>\'}</div>',
-      '管理端六列帖子容器'
-    );
+    /* PREPARED_ADMIN_POST_GRID_MATCH_V3 */
+
 
     write(file, marker + '\n' + next);
   }
@@ -95,9 +91,15 @@ const approvedCss = readTemplate('approved-layout-team-draft-720.css');
   if (!source.includes(marker)) {
     let next = source;
     next = replaceOnce(next, '    const plazaCopy = cleanText(body.plazaCopy, 2000);', '    const plazaCopy = cleanText(body.copy, 2000);', '广场文案复用活动文案');
-    next = replaceOnce(next, "    if (intent === 'submitted' && isPublic && !plazaCopy) return json({ error: '请填写广场作品文案' }, 400);\n", '', '删除广场二次文案后端校验');
-    next = replaceOnce(next, "    const intent = body.intent === 'draft' ? 'draft' : 'submitted';\n", "    const intent = body.intent === 'draft' ? 'draft' : 'submitted';\n" + allMembersGuard, '队伍全员完成后端校验');
-    next = replaceOnce(next, '  const memberMatch = route.match(/^\\/api\\/tasks\\/([^/]+)\\/member-checkin$/);', teamHistoryBackend + '  const memberMatch = route.match(/^\\/api\\/tasks\\/([^/]+)\\/member-checkin$/);', '队伍历史接口位置');
+    next = replaceOnce(next, /    if \(intent === 'submitted' && isPublic && !plazaCopy\) return json\(\{ error: '[^']*' \}, 400\);\r?\n/, '', '删除广场二次文案后端校验');
+    next = replaceOnce(next, /    const intent = body\.intent === 'draft' \? 'draft' : 'submitted';\r?\n/, "    const intent = body.intent === 'draft' ? 'draft' : 'submitted';\n" + allMembersGuard, '队伍全员完成后端校验');
+    /* PREPARED_TEAM_HISTORY_ANCHOR_V2 */
+    next = replaceOnce(
+      next,
+      '  const submissionMatch = route.match',
+      teamHistoryBackend + '  const submissionMatch = route.match',
+      '队伍历史接口位置'
+    );
     write(file, marker + '\n' + next);
   }
 }

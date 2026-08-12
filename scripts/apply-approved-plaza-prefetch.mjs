@@ -75,7 +75,7 @@ const replaceOnce = (input, search, replacement, label) => {
 
     source = replaceOnce(
       source,
-      "  try { localStorage.user = JSON.stringify(user); } catch {}\n  const isInteraction = user.trackId === 'interaction';",
+      /  try \{ localStorage\.user = JSON\.stringify\(user\); \} catch \{\}\r?\n  const isInteraction = user\.trackId === 'interaction';/,
       "  try { localStorage.user = JSON.stringify(user); } catch {}\n  void prefetchStudentPlaza();\n  const isInteraction = user.trackId === 'interaction';",
       '学生首页预取启动位置'
     );
@@ -114,7 +114,7 @@ const replaceOnce = (input, search, replacement, label) => {
     ].join('\n');
     source = replaceOnce(
       source,
-      '      window.__BOOTSTRAP_DASHBOARD__ = session.dashboard || null;\n',
+      /      window\.__BOOTSTRAP_DASHBOARD__ = session\.dashboard \|\| null;\r?\n/,
       `      window.__BOOTSTRAP_DASHBOARD__ = session.dashboard || null;\n${bootstrapPrefetch}\n`,
       '启动阶段活动广场预取位置'
     );

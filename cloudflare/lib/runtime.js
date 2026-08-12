@@ -1,3 +1,7 @@
+/* TRACK_AWARE_ADMIN_SETTINGS_V1 */
+/* APPROVED_MOBILE_EXPERIENCE_FINALIZED_V1 */
+/* APPROVED_MOBILE_EXPERIENCE_BACKEND_V1 */
+/* CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1 */
 const encoder = new TextEncoder();
 const requestPerformanceMetrics = new WeakMap();
 
@@ -211,6 +215,9 @@ export const requireUser = async (request, env, admin = false) => {
 export const readConfig = async (env) => {
   const { results } = await env.DB.prepare('SELECT key, value_json AS valueJson FROM app_config').all();
   const values = Object.fromEntries(results.map((item) => [item.key, parseJson(item.valueJson)]));
+  const checkinSettings = values.checkinSettings || {};
+  const checkinSettingsConfigured = Object.prototype.hasOwnProperty.call(values, 'checkinSettings');
+  const healthCheckinSettings = values.healthCheckinSettings || {};
   return {
     activityName: values.activityName || '庆福建农林大学金山学院建院20周年-设计学院',
     startDate: values.startDate || '',
@@ -224,6 +231,36 @@ export const readConfig = async (env) => {
     trackEnabled: values.trackEnabled || { interaction: false, health: false },
     maxTeams: Number(values.maxTeams || 50),
     allowSelfJoin: Boolean(values.allowSelfJoin),
+    checkinSettingsConfigured,
+    checkinSettings: {
+      configured: Boolean(values.checkinSettings),
+      enabled: checkinSettings.enabled !== false && values.trackEnabled?.interaction !== false,
+      activeStartDate: checkinSettings.activeStartDate || values.startDate || '',
+      activeEndDate: checkinSettings.activeEndDate || values.endDate || '',
+      dailyStart: checkinSettings.dailyStart || '00:00',
+      dailyEnd: checkinSettings.dailyEnd || '23:59',
+      weekdays: Array.isArray(checkinSettings.weekdays) && checkinSettings.weekdays.length
+        ? checkinSettings.weekdays.map(Number).filter((day) => day >= 1 && day <= 7)
+        : [1, 2, 3, 4, 5, 6, 7],
+      personalImageLimit: Math.min(8, Math.max(1, Number(checkinSettings.personalImageLimit || 3))),
+      teamImageLimit: Math.min(8, Math.max(1, Number(checkinSettings.teamImageLimit || 3)))
+    },
+    healthCheckinSettings: {
+      enabled: healthCheckinSettings.enabled !== false && values.trackEnabled?.health !== false,
+      activeStartDate: healthCheckinSettings.activeStartDate || values.startDate || '',
+      activeEndDate: healthCheckinSettings.activeEndDate || values.endDate || '',
+      weekdays: Array.isArray(healthCheckinSettings.weekdays) && healthCheckinSettings.weekdays.length
+        ? healthCheckinSettings.weekdays.map(Number).filter((day) => day >= 1 && day <= 7)
+        : [1, 2, 3, 4, 5, 6, 7],
+      personalImageLimit: Math.min(8, Math.max(1, Number(healthCheckinSettings.personalImageLimit || 3))),
+      slots: Array.isArray(healthCheckinSettings.slots) && healthCheckinSettings.slots.length
+        ? healthCheckinSettings.slots
+        : (values.slots || [
+          { id: 'breakfast', label: '早餐', start: '06:50', end: '10:00' },
+          { id: 'lunch', label: '午餐', start: '10:30', end: '14:00' },
+          { id: 'dinner', label: '晚餐', start: '16:30', end: '19:30' }
+        ])
+    },
     environment: env.ENVIRONMENT || 'unknown'
   };
 };

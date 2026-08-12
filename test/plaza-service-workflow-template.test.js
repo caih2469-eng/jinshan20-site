@@ -9,7 +9,7 @@ const productionConfig = JSON.parse(fs.readFileSync('cloudflare/plaza-service/wr
 
 test('广场服务工作流先验证再部署，仓库内容只读且仅允许写提交状态', () => {
   assert.match(workflow, /^name: Plaza service validation and deployment/m);
-  assert.match(workflow, /^permissions:\s*\n  contents: read\n  statuses: write$/m);
+  assert.match(workflow, /^permissions:\s*\r?\n  contents: read\r?\n  statuses: write$/m);
   assert.doesNotMatch(workflow, /contents: write/);
   assert.doesNotMatch(workflow, /pull-requests: write|issues: write|actions: write/);
   assert.match(workflow, /^  validate:/m);

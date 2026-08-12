@@ -36,7 +36,7 @@ const replaceOnce = (source, search, replacement, label) => {
       "};",
       ''
     ].join('\n');
-    next = replaceOnce(next, 'const roundedDuration = (startedAt) => Math.round((performance.now() - startedAt) * 10) / 10;\n', 'const roundedDuration = (startedAt) => Math.round((performance.now() - startedAt) * 10) / 10;\n' + helpers, '照片流程计时帮助函数');
+    next = replaceOnce(next, /const roundedDuration = \(startedAt\) => Math\.round\(\(performance\.now\(\) - startedAt\) \* 10\) \/ 10;\r?\n/, 'const roundedDuration = (startedAt) => Math.round((performance.now() - startedAt) * 10) / 10;\n' + helpers, '照片流程计时帮助函数');
     next = replaceOnce(
       next,
       "  image.addEventListener('load', () => recordPerf('image-visible', { metric, duration: roundedDuration(startedAt), bytesHint: Number(image.dataset.bytes || 0) }), { once: true });",

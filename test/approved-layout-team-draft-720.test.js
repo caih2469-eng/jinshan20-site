@@ -43,16 +43,21 @@ test('队伍必须全员完成后才能汇总且只有队长可提交', () => {
 test('队伍草稿可继续编辑并删除广场二次文案字段', () => {
   const app = read('public/app.js');
   const student = read('cloudflare/routes/student.js');
+  const plazaBody = app.match(/\/\* PLAZA_MOBILE_LAYOUT_V1 \*\/[\s\S]*?async function plaza/)?.[0] || '';
   assert.match(app, /已保存队伍作品/);
   assert.doesNotMatch(app, /广场作品文案（发布时必填）/);
   assert.doesNotMatch(app, /id="plazaCopyField"/);
   assert.match(app, /plazaCopy: form\.copy\.value/);
   assert.match(student, /const plazaCopy = cleanText\(body\.copy, 2000\)/);
   assert.doesNotMatch(student, /请填写广场作品文案/);
+  assert.match(plazaBody, /<h2>\$\{escapeHtml\(post\.teamName\)\}<\/h2>/);
+  assert.match(plazaBody, /plaza-channel-tabs/);
+  assert.match(plazaBody, /togglePlazaSearch/);
+  assert.doesNotMatch(plazaBody, /四校区活动广场|月度排行|id="plazaMonth"/);
 });
 
 test('管理端打卡设置紧凑且帖子固定六列', () => {
-  const app = read('public/app.js');
+  const app = read('public/app.js') + '\n' + read('public/admin-client.js');
   const style = read('public/style.css');
   assert.match(app, /class="[^"]*\badmin-post-grid\b[^"]*"/);
   assert.match(style, /\.admin-post-grid[\s\S]*grid-template-columns:\s*repeat\(6,minmax\(0,1fr\)\)/);

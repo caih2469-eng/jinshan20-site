@@ -30,7 +30,7 @@ if (!route.includes(routeMarker)) {
   );
   route = replaceOnce(
     route,
-    `  const auth = await requireUser(request, env);\n  if (auth.error) return auth.error;\n  const user = auth.user;`,
+    /  const auth = await requireUser\(request, env\);\r?\n  if \(auth\.error\) return auth\.error;\r?\n  const user = auth\.user;/,
     `  const auth = authenticatedUser ? { user: authenticatedUser } : await requireUser(request, env);\n  if (auth.error) return auth.error;\n  const user = auth.user;`,
     '学生路由认证链路'
   );

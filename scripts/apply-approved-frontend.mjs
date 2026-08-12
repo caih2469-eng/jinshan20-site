@@ -25,12 +25,21 @@ const replaceOnce = (source, search, replacement, label) => {
     next = next.replace(/const MEDIA_THUMB_MAX_SIZE_MB = (?:0\.12|0\.18);/, 'const MEDIA_THUMB_MAX_SIZE_MB = 0.22;');
     next = next.replace(/const MEDIA_THUMB_QUALITY = (?:0\.72|0\.82);/, 'const MEDIA_THUMB_QUALITY = 0.82;');
 
-    next = replaceOnce(
-      next,
-      "  const materialResult = { tasks: dashboard.materialTasks };\n",
-      "  const checkinStats = dashboard.checkinStats || { personalDays: 0, teamDays: 0 };\n",
-      '学生首页累计打卡数据'
-    );
+    if (next.includes('  const materialResult = { tasks: dashboard.materialTasks };\n')) {
+      next = replaceOnce(
+        next,
+        "  const materialResult = { tasks: dashboard.materialTasks };\n",
+        "  const checkinStats = dashboard.checkinStats || { personalDays: 0, teamDays: 0 };\n",
+        '学生首页累计打卡数据'
+      );
+    } else if (!next.includes('const checkinStats = dashboard.checkinStats')) {
+      next = replaceOnce(
+        next,
+        '  const taskResult = { tasks: dashboard.tasks };',
+        '  const taskResult = { tasks: dashboard.tasks };\n  const checkinStats = dashboard.checkinStats || { personalDays: 0, teamDays: 0 };',
+        'current student dashboard check-in totals'
+      );
+    }
     next = replaceOnce(
       next,
       /      <div class="student-progress"[^>]*><strong>\$\{taskProgress\}%<\/strong><span>任务进度<\/span><\/div>/,
@@ -39,7 +48,7 @@ const replaceOnce = (source, search, replacement, label) => {
     );
     next = replaceOnce(
       next,
-      /    <nav class="student-shortcuts student-shortcuts-compact" aria-label="常用功能">[\s\S]*?    <\/nav>/,
+      /    <nav class="student-shortcuts[^"]*"[^>]*>[\s\S]*?    <\/nav>/,
       [
         '    <nav class="student-shortcuts student-shortcuts-compact student-shortcuts-four" aria-label="常用功能">',
         '      <button id="historyCheckins"><span>✓</span><strong>历史打卡</strong><small>查看记录</small></button>',
@@ -70,12 +79,8 @@ const replaceOnce = (source, search, replacement, label) => {
       "${task.scheduleType === 'activityDays' ? `${escapeHtml(task.occurrenceDate)} 当天 ${task.dailyStart}–${task.dailyEnd} · 活动第 ${task.refreshDays.join('、')} 天自动刷新` : task.scheduleType === 'weekly' ? `${escapeHtml(task.occurrenceDate)} 当天 ${task.dailyStart}–${task.dailyEnd} · 周${task.weekdays.join('、周')}自动刷新` : `${formatDate(task.startAt)} 至 ${formatDate(task.endAt)}`} · 最多 ${task.imageLimit} 张图 · ${task.allowLate ? '允许补交' : '不允许补交'}",
       "${task.scheduleType === 'activityDays' ? `${escapeHtml(task.occurrenceDate)} 当天 ${task.dailyStart}–${task.dailyEnd} · 活动第 ${task.refreshDays.join('、')} 天自动刷新` : task.scheduleType === 'weekly' ? `${escapeHtml(task.occurrenceDate)} 当天 ${task.dailyStart}–${task.dailyEnd} · 周${task.weekdays.join('、周')}自动刷新` : `${formatDate(task.startAt)} 至 ${formatDate(task.endAt)}`} · ${isInteraction ? `个人最多 ${task.memberImageLimit || task.imageLimit} 张 · 队伍汇总最多 ${task.imageLimit} 张` : `最多 ${task.imageLimit} 张图`} · ${task.allowLate ? '允许补交' : '不允许补交'}"
     );
-    next = replaceOnce(
-      next,
-      /  const materialStatus = \{[\s\S]*?app\.insertAdjacentHTML\('beforeend', `<section class="card"><div class="row"><h2>最终截图证明<\/h2>[\s\S]*?`\);\n/,
-      '',
-      '最终截图证明页面区块'
-    );
+    const materialSectionPattern = /  const materialStatus = \{[\s\S]*?app\.insertAdjacentHTML\('beforeend', `<section class="card"><div class="row"><h2>最终截图证明<\/h2>[\s\S]*?`\);\r?\n/;
+    if (materialSectionPattern.test(next)) next = next.replace(materialSectionPattern, '');
     next = next.replace(/  document\.querySelectorAll\('\[data-material\]'\)[\s\S]*?  \}\);\n/, '');
     next = next.replace(/  document\.querySelectorAll\('\.material-download'\)[\s\S]*?  \}\);\n/, '');
 
@@ -111,7 +116,8 @@ const replaceOnce = (source, search, replacement, label) => {
       ''
     ].join('\n');
     next = replaceOnce(next, "const prepareDynamicContent = (container = app) => {", imagePerf + "const prepareDynamicContent = (container = app) => {", '图片真实显示计时');
-    next = replaceOnce(next, "    if (image.dataset.dynamicReady) return;\n    image.dataset.dynamicReady = 'true';", "    if (image.dataset.dynamicReady) return;\n    image.dataset.dynamicReady = 'true';\n    preparePerfImage(image);", '动态图片计时绑定');
+    const dynamicReadyPattern = /    if \(image\.dataset\.dynamicReady\) return;\r?\n    image\.dataset\.dynamicReady = 'true';/;
+    next = replaceOnce(next, dynamicReadyPattern, "    if (image.dataset.dynamicReady) return;\n    image.dataset.dynamicReady = 'true';\n    preparePerfImage(image);", '动态图片计时绑定');
 
     const saveFunction = [
       "const saveOriginalImage = async (url, alt = '活动原图') => {",
@@ -139,8 +145,8 @@ const replaceOnce = (source, search, replacement, label) => {
     next = replaceOnce(next, 'const openImageViewer = (thumbSrc, displaySrc, alt = \'查看图片\', renderedImage = null) => {', saveFunction + "const openImageViewer = (thumbSrc, displaySrc, alt = '查看图片', renderedImage = null) => {", '原图保存功能');
     next = replaceOnce(
       next,
-      '  viewer.innerHTML = `\n    <div class="image-viewer-stage" aria-label="单击返回上一层"><div class="image-shell"><img decoding="async" src="${escapeHtml(thumb)}" alt="${escapeHtml(alt)}"><button type="button" class="image-error" hidden>图片加载失败，点击重试</button></div></div>`;',
-      '  viewer.innerHTML = `\n    <div class="image-viewer-toolbar"><button type="button" class="secondary" data-image-close>关闭原图</button><button type="button" data-image-save>保存原图</button></div>\n    <div class="image-viewer-stage" aria-label="单击返回上一层"><div class="image-shell"><img decoding="async" src="${escapeHtml(thumb)}" alt="${escapeHtml(alt)}"><button type="button" class="image-error" hidden>图片加载失败，点击重试</button></div></div>`;',
+      /  viewer\.innerHTML = `\r?\n    <div class="image-viewer-stage"([\s\S]*?)<\/div><\/div>`;/,
+      '  viewer.innerHTML = `\n    <div class="image-viewer-toolbar"><button type="button" class="secondary" data-image-close>关闭原图</button><button type="button" data-image-save>保存原图</button></div>\n    <div class="image-viewer-stage"$1</div></div>`;',
       '原图查看器工具栏'
     );
     next = replaceOnce(
@@ -207,7 +213,7 @@ const replaceOnce = (source, search, replacement, label) => {
     next = replaceOnce(next, '<div><dt>任务</dt><dd>${escapeHtml(post.taskName)}</dd></div>', '<div><dt>队伍</dt><dd>${escapeHtml(post.teamName)}</dd></div>', '广场详情队伍字段');
     next = replaceOnce(
       next,
-      '      <div class="wide"><dt>文案</dt><dd>${escapeHtml(post.copy || \'无文案\')}</dd></div>\n    </dl>',
+      /      <div class="wide"><dt>文案<\/dt><dd>\$\{escapeHtml\(post\.copy \|\| '[^']*'\)\}<\/dd><\/div>\r?\n    <\/dl>/,
       [
         '      <div class="wide"><dt>文案</dt><dd>${escapeHtml(post.copy || \'无文案\')}</dd></div>',
         '    </dl>',
@@ -215,7 +221,16 @@ const replaceOnce = (source, search, replacement, label) => {
       ].join('\n'),
       '管理员广场照片展示'
     );
-    next = replaceOnce(next, "  document.body.append(root);\n  const close = () => root.remove();", "  document.body.append(root);\n  prepareDynamicContent(root);\n  const close = () => root.remove();", '管理员广场动态图片加载');
+    const postActionsStart = next.indexOf('function openCompactPostActions(post) {');
+    const postAppendAnchor = '  document.body.append(root);';
+    const postAppendIndex = next.indexOf(postAppendAnchor, postActionsStart);
+    if (postActionsStart < 0 || postAppendIndex < 0) {
+      throw new Error('未找到管理员广场动态图片加载，已停止以避免误改');
+    }
+    if (!next.slice(postAppendIndex, postAppendIndex + 100).includes('prepareDynamicContent(root);')) {
+      const insertAt = postAppendIndex + postAppendAnchor.length;
+      next = `${next.slice(0, insertAt)}\n  prepareDynamicContent(root);${next.slice(insertAt)}`;
+    }
 
     next += `\n${marker}\n`;
     write(file, next);
@@ -281,3 +296,4 @@ for (const relativePath of ['public/bootstrap.js', 'public/index.html', 'public/
 }
 
 console.log('Applied approved compact student home, admin settings, layered original viewer and 640px WebP UI.');
+await import('./apply-approved-lazy-admin.mjs');

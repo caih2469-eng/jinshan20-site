@@ -15,26 +15,33 @@ test('管理员用户卡片点击后立即打开打卡抽屉，不再等待全�
   assert.doesNotMatch(panel, /beginButtonLoading\(button/);
 });
 
-test('打卡抽屉仅显示打卡记录并提供一分钟缓存和请求去重', () => {
-  const app = read('public/app.js') + '\n' + read('public/admin-client.js');
-  const start = app.indexOf('/* MOBILE_ADMIN_PHOTO_FIX_V1 */');
-  const end = app.indexOf('function taskFormFields', start);
-  const drawer = app.slice(start, end);
+test('打卡抽屉优先显示打卡记录、保留按需管理功能并提供一分钟缓存和请求去重', () => {
+  const adminClient = read('public/admin-client.js');
+  const start = adminClient.indexOf('/* MOBILE_ADMIN_PHOTO_FIX_V1 */');
+  const end = adminClient.indexOf('function taskFormFields', start);
+  assert.ok(start >= 0 && end > start, '按需后台打卡抽屉边界不完整');
+  const drawer = adminClient.slice(start, end);
   assert.match(drawer, /ADMIN_CHECKIN_CACHE_TTL_MS = 60_000/);
   assert.match(drawer, /adminCheckinInflight/);
   assert.match(drawer, /admin-checkin-photo-grid/);
-  assert.doesNotMatch(drawer, /基本资料|所属队伍|补卡权限|管理操作/);
+  assert.match(drawer, /基本资料|所属队伍|补卡权限|管理操作/);
+  assert.match(drawer, /loadManagementData/);
   assert.doesNotMatch(drawer, /new Image\(\)/);
 });
 
-test('所有管理端缩略图限制为最长边640px并优先WebP', () => {
-  const app = read('public/app.js') + '\n' + read('public/admin-client.js');
+test('管理端列表图使用960px Pica/WebP并与媒体服务限制一致', () => {
+  const app = read('public/app.js');
   const media = read('cloudflare/routes/media.js');
-  assert.match(app, /MEDIA_THUMB_MAX_EDGE = 640/);
-  assert.match(app, /MEDIA_THUMB_QUALITY = 0\.82/);
-  assert.match(app, /正在生成540px WebP缩略图/);
-  assert.match(app, /businessType: 'member-checkin'[\s\S]*variant: 'thumb'[\s\S]*parentMediaId: displayMediaId/);
-  assert.match(media, /THUMB_MAX_EDGE = 640/);
+  assert.match(app, /\/\* PICA_IMAGE_PIPELINE_V1 \*\//);
+  assert.match(app, /PICA_THUMB_MAX_EDGE = 960/);
+  assert.match(app, /PICA_DISPLAY_MAX_EDGE = 2048/);
+  assert.match(app, /quality: screenshotLike \? 0\.92 : 0\.88/);
+  assert.match(app, /prepareImageVariantsMeasured\(selected\[index\]/);
+  assert.match(app, /uploadPreparedImagePair\(prepared,/);
+  assert.match(app, /confirmVariantUpload\(thumbIntent, prepared\.thumb, display\.mediaId, signal\)/);
+  assert.match(media, /THUMB_MAX_EDGE = 960/);
+  assert.match(media, /PLAZA_THUMB_MAX_EDGE = 960/);
+  assert.match(media, /DISPLAY_MAX_EDGE = 2048/);
 });
 
 test('手机管理端头部使用两列紧凑按钮并让退出独占一行', () => {

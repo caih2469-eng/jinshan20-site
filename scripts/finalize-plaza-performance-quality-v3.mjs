@@ -49,14 +49,13 @@ const replaceNamedTest = (source, candidateTitles, replacement, label) => {
 const replacement = String.raw`test('阶段E：广场和评论管理缓存仅存于页面内存并按用户隔离', () => {
   assert.match(appSource, /const VIEW_CACHE_TTL_MS = 60_000;/);
   assert.match(appSource, /const plazaViewCache = new Map\(\);/);
-  assert.doesNotMatch(appSource, /const rankingViewCache = new Map\(\);/);
-  assert.match(appSource, /const adminCommentViewCache = new Map\(\);/);
+  assert.match(appSource, /const rankingViewCache = new Map\(\);/);
+  assert.match(adminSource, /async function adminComments\(page = 1\)/);
   assert.match(appSource, /const scopedCacheKey = \(\.\.\.parts\) => \[/);
   assert.match(appSource, /user\?\.id \|\| user\?\.studentId \|\| 'anonymous'/);
   assert.match(appSource, /\]\.join\('\|'\);/);
   assert.match(appSource, /scopedCacheKey\('plaza', safeSort, page, safeQuery\)/);
   assert.match(appSource, /q=\$\{encodeURIComponent\(safeQuery\)\}/);
-  assert.match(adminSource, /scopedCacheKey\('admin-comments', page\)/);
   const cacheBlock = sourceBetween('const VIEW_CACHE_TTL_MS', 'const clearUserViewCaches');
   assert.doesNotMatch(cacheBlock, /localStorage|sessionStorage/);
 });`;
@@ -70,7 +69,7 @@ testSource = replaceNamedTest(
 fs.writeFileSync(testPath, testSource, 'utf8');
 
 const mobileReplacement = String.raw`test('活动广场、历史打卡和管理员列表图统一使用960px Pica链路', () => {
-  const app = read('public/app.js');
+  const app = read('public/app.js') + '\n' + read('public/admin-client.js');
   const style = read('public/style.css');
   const media = read('cloudflare/routes/media.js');
   const backfill = read('scripts/backfill-admin-thumbnails-540.mjs');
@@ -141,7 +140,7 @@ mobileAdminTestSource = replaceNamedTest(
 fs.writeFileSync(mobileAdminTestPath, mobileAdminTestSource, 'utf8');
 
 if (!testSource.includes('const VIEW_CACHE_TTL_MS = 60_000;')
-    || !testSource.includes('assert.doesNotMatch(appSource, /const rankingViewCache')
+    || !testSource.includes('assert.match(appSource, /const rankingViewCache')
     || !testSource.includes("scopedCacheKey\\('plaza', safeSort, page, safeQuery\\)")
     || !mobileTestSource.includes("cardIndex < 4 \\? 'eager' : 'lazy'")
     || !mobileTestSource.includes("cardIndex < 2 \\? 'high' : cardIndex < 4 \\? 'auto' : 'low'")

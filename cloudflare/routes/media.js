@@ -1,15 +1,24 @@
+/* APPROVED_LAYOUT_TEAM_DRAFT_720_V2 */
+/* APPROVED_MOBILE_EXPERIENCE_FINALIZED_V1 */
+/* APPROVED_MOBILE_EXPERIENCE_BACKEND_V1 */
+/* CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1 */
 import { AwsClient } from 'aws4fetch';
 import {
   cleanText,
   hasMakeupPermission,
   json,
   nowIso,
+  readConfig,
   readJson,
   requireUser,
   shanghaiDate
 } from '../lib/runtime.js';
 import { verifyPrivateMediaRequest } from '../lib/media-signing.js';
-import { taskWindowOpen, teamForUser } from '../services/student-dashboard.js';
+import {
+  applyInteractionCheckinSettings,
+  taskWindowOpen,
+  teamForUser
+} from '../services/student-dashboard.js';
 
 const ALLOWED_TYPES = new Map([
   ['image/jpeg', 'jpg'],
@@ -17,9 +26,9 @@ const ALLOWED_TYPES = new Map([
   ['image/webp', 'webp']
 ]);
 const MAX_FINAL_BYTES = 1_572_864;
-const THUMB_MAX_EDGE = 360;
-const PLAZA_THUMB_MAX_EDGE = 640;
-const DISPLAY_MAX_EDGE = 960;
+const THUMB_MAX_EDGE = 960;
+const PLAZA_THUMB_MAX_EDGE = 960;
+const DISPLAY_MAX_EDGE = 2048;
 const INTENT_TTL_SECONDS = 180;
 const MEMBER_FAST_MAX_BYTES = 307_200;
 const MEMBER_FAST_MAX_EDGE = 960;
@@ -206,22 +215,27 @@ const memberFastUpload = async (request, env) => {
     return json({ error: '图片压缩后仍超过300KB，请先在相册中裁剪、截图或压缩后重新上传。' }, 413);
   }
 
-  const task = await env.DB.prepare(
-    `SELECT id,track_id AS trackId,submission_type AS submissionType,
-            starts_at AS startsAt,ends_at AS endsAt,schedule_json AS scheduleJson,status
-       FROM tasks WHERE id=?1 LIMIT 1`
-  ).bind(taskId).first();
+  const [task, team, taskConfig] = await Promise.all([
+    env.DB.prepare(
+      `SELECT id,track_id AS trackId,submission_type AS submissionType,
+              image_limit AS imageLimit,starts_at AS startsAt,ends_at AS endsAt,
+              schedule_json AS scheduleJson,status
+         FROM tasks WHERE id=?1 LIMIT 1`
+    ).bind(taskId).first(),
+    teamForUser(env, auth.user.id),
+    readConfig(env)
+  ]);
   if (!task || task.status !== 'published' || task.trackId !== 'interaction'
       || (task.submissionType && task.submissionType !== 'team')) {
     return json({ error: '任务不存在、已关闭或不支持队伍成员打卡' }, 404);
   }
-  const team = await teamForUser(env, auth.user.id);
+  const effectiveTask = applyInteractionCheckinSettings(task, taskConfig);
   if (!team) return json({ error: '尚未分配队伍，不能上传队伍打卡图片' }, 403);
   const occurrenceDate = shanghaiDate();
-  let windowOpen = taskWindowOpen(task, occurrenceDate, false);
+  let windowOpen = taskWindowOpen(effectiveTask, occurrenceDate, false);
   if (!windowOpen) {
     const makeupAllowed = await hasMakeupPermission(env, auth.user.id, occurrenceDate);
-    windowOpen = taskWindowOpen(task, occurrenceDate, makeupAllowed);
+    windowOpen = taskWindowOpen(effectiveTask, occurrenceDate, makeupAllowed);
   }
   if (!windowOpen) return json({ error: '当前不在该任务的打卡时间范围内' }, 403);
 
@@ -238,48 +252,6 @@ const memberFastUpload = async (request, env) => {
   const objectKey = `media/${env.ENVIRONMENT || 'test'}/${auth.user.id}/member-checkin/${idempotencyKey}-${digest}.${extension}`;
   const now = nowIso();
   const expiresAt = new Date(Date.now() + INTENT_TTL_SECONDS * 1000).toISOString();
-  await env.DB.prepare(
-    `INSERT OR IGNORE INTO media_upload_intents
-      (id,user_id,task_id,business_type,object_key,mime_type,expected_size,width,height,status,
-       expires_at,created_at,updated_at)
-     VALUES (?1,?2,?3,'member-checkin',?4,?5,?6,?7,?8,'pending',?9,?10,?10)`
-  ).bind(idempotencyKey, auth.user.id, task.id, objectKey, mimeType, buffer.byteLength,
-    width, height, expiresAt, now).run();
-  const intent = await env.DB.prepare(
-    `SELECT id,user_id AS userId,task_id AS taskId,business_type AS businessType,
-            object_key AS objectKey,mime_type AS mimeType,expected_size AS expectedSize,
-            width,height,status
-       FROM media_upload_intents WHERE id=?1 LIMIT 1`
-  ).bind(idempotencyKey).first();
-  if (!intent) return json({ error: '上传会话创建失败，请稍后重试' }, 500);
-  if (intent.userId !== auth.user.id) return json({ error: '无权使用该上传编号' }, 403);
-  const intentMatches = intent.taskId === task.id
-    && intent.businessType === 'member-checkin'
-    && intent.objectKey === objectKey
-    && intent.mimeType === mimeType
-    && Number(intent.expectedSize) === buffer.byteLength
-    && Number(intent.width) === width
-    && Number(intent.height) === height;
-  if (!intentMatches) return json({ error: '相同上传编号对应的图片内容不一致' }, 409);
-
-  const existingMedia = await env.DB.prepare(
-    `SELECT id,owner_user_id AS ownerUserId,task_id AS taskId,business_type AS businessType,
-            object_key AS objectKey,mime_type AS mimeType,file_size AS fileSize,width,height
-       FROM media_objects WHERE id=?1 LIMIT 1`
-  ).bind(idempotencyKey).first();
-  if (existingMedia) {
-    if (existingMedia.ownerUserId !== auth.user.id) return json({ error: '无权访问该媒体记录' }, 403);
-    if (intent.status !== 'confirmed' || existingMedia.taskId !== task.id
-        || existingMedia.businessType !== 'member-checkin' || existingMedia.objectKey !== objectKey
-        || existingMedia.mimeType !== mimeType || Number(existingMedia.fileSize) !== buffer.byteLength
-        || Number(existingMedia.width) !== width || Number(existingMedia.height) !== height) {
-      return json({ error: '上传记录状态或内容不一致' }, 409);
-    }
-    return json({ ok: true, repeated: true, media: memberFastMediaPayload(existingMedia) });
-  }
-  if (intent.status === 'confirmed') return json({ error: '已确认的上传缺少媒体记录' }, 409);
-  if (intent.status !== 'pending') return json({ error: '该上传会话已失效' }, 409);
-
   const priorObject = await env.UPLOADS.head(objectKey);
   if (priorObject && (priorObject.size !== buffer.byteLength
       || priorObject.httpMetadata?.contentType !== mimeType
@@ -303,6 +275,13 @@ const memberFastUpload = async (request, env) => {
     }
     const results = await env.DB.batch([
       env.DB.prepare(
+        `INSERT OR IGNORE INTO media_upload_intents
+          (id,user_id,task_id,business_type,object_key,mime_type,expected_size,width,height,status,
+           expires_at,created_at,updated_at)
+         VALUES (?1,?2,?3,'member-checkin',?4,?5,?6,?7,?8,'pending',?9,?10,?10)`
+      ).bind(idempotencyKey, auth.user.id, task.id, objectKey, mimeType, buffer.byteLength,
+        width, height, expiresAt, now),
+      env.DB.prepare(
         `INSERT OR IGNORE INTO media_objects
           (id,owner_user_id,task_id,business_type,object_key,mime_type,file_size,width,height,etag,
            visibility,business_id,created_at,updated_at)
@@ -312,16 +291,31 @@ const memberFastUpload = async (request, env) => {
       env.DB.prepare(
         `UPDATE media_upload_intents
             SET status='confirmed',confirmed_at=?1,updated_at=?1
-          WHERE id=?2 AND user_id=?3 AND status='pending'`
-      ).bind(now, idempotencyKey, auth.user.id)
+          WHERE id=?2 AND user_id=?3 AND task_id=?4 AND business_type='member-checkin'
+            AND object_key=?5 AND mime_type=?6 AND expected_size=?7 AND width=?8 AND height=?9
+            AND status='pending'`
+      ).bind(now, idempotencyKey, auth.user.id, task.id, objectKey, mimeType,
+        buffer.byteLength, width, height)
     ]);
-    if (!results[1]?.meta?.changes) {
+    if (!results[2]?.meta?.changes) {
       const recovered = await env.DB.prepare(
-        `SELECT id,mime_type AS mimeType,file_size AS fileSize,width,height
-           FROM media_objects WHERE id=?1 AND owner_user_id=?2 LIMIT 1`
-      ).bind(idempotencyKey, auth.user.id).first();
-      if (recovered) {
+        `SELECT m.id,m.owner_user_id AS ownerUserId,m.task_id AS taskId,
+                m.business_type AS businessType,m.object_key AS objectKey,
+                m.mime_type AS mimeType,m.file_size AS fileSize,m.width,m.height,i.status
+           FROM media_objects m JOIN media_upload_intents i ON i.id=m.id
+          WHERE m.id=?1 LIMIT 1`
+      ).bind(idempotencyKey).first();
+      const recoveredMatches = recovered?.ownerUserId === auth.user.id
+        && recovered.taskId === task.id && recovered.businessType === 'member-checkin'
+        && recovered.objectKey === objectKey && recovered.mimeType === mimeType
+        && Number(recovered.fileSize) === buffer.byteLength
+        && Number(recovered.width) === width && Number(recovered.height) === height
+        && recovered.status === 'confirmed';
+      if (recoveredMatches) {
         return json({ ok: true, repeated: true, media: memberFastMediaPayload(recovered) });
+      }
+      if (recovered && recovered.ownerUserId !== auth.user.id) {
+        throw Object.assign(new Error('无权使用该上传编号'), { status: 403 });
       }
       throw Object.assign(new Error('图片确认发生冲突，请点击重试上传'), { status: 409 });
     }

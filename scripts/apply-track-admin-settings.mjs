@@ -11,8 +11,10 @@ const read = (relativePath) => {
 };
 const write = (file, source) => fs.writeFileSync(file, source, 'utf8');
 const replaceOnce = (source, search, replacement, label) => {
-  if (!source.includes(search)) throw new Error(`未找到${label}，已停止以避免误改`);
-  return source.replace(search, replacement);
+  if (source.includes(search)) return source.replace(search, replacement);
+  const windowsSearch = search.replaceAll('\n', '\r\n');
+  if (source.includes(windowsSearch)) return source.replace(windowsSearch, replacement);
+  throw new Error(`未找到${label}，已停止以避免误改`);
 };
 const replaceSection = (source, startText, endText, replacement, label) => {
   const start = source.indexOf(startText);
@@ -124,14 +126,34 @@ ${marker}
   if (!source.includes(marker)) {
     let next = replaceOnce(
       source,
-      '  const checkinSettings = values.checkinSettings || {};\n  return {',
-      '  const checkinSettings = values.checkinSettings || {};\n  const healthCheckinSettings = values.healthCheckinSettings || {};\n  return {',
+      '  const checkinSettingsConfigured = Object.prototype.hasOwnProperty.call(values, \'checkinSettings\');\n  return {',
+      '  const checkinSettingsConfigured = Object.prototype.hasOwnProperty.call(values, \'checkinSettings\');\n  const healthCheckinSettings = values.healthCheckinSettings || {};\n  return {',
       '健康自律设置读取变量'
     );
+    const environmentAnchor = "    environment: env.ENVIRONMENT || 'unknown'";
+    const healthSettings = [
+      '    healthCheckinSettings: {',
+      '      enabled: healthCheckinSettings.enabled !== false && values.trackEnabled?.health !== false,',
+      "      activeStartDate: healthCheckinSettings.activeStartDate || values.startDate || '',",
+      "      activeEndDate: healthCheckinSettings.activeEndDate || values.endDate || '',",
+      '      weekdays: Array.isArray(healthCheckinSettings.weekdays) && healthCheckinSettings.weekdays.length',
+      '        ? healthCheckinSettings.weekdays.map(Number).filter((day) => day >= 1 && day <= 7)',
+      '        : [1, 2, 3, 4, 5, 6, 7],',
+      '      personalImageLimit: Math.min(8, Math.max(1, Number(healthCheckinSettings.personalImageLimit || 3))),',
+      '      slots: Array.isArray(healthCheckinSettings.slots) && healthCheckinSettings.slots.length',
+      '        ? healthCheckinSettings.slots',
+      '        : (values.slots || [',
+      "          { id: 'breakfast', label: '早餐', start: '06:50', end: '10:00' },",
+      "          { id: 'lunch', label: '午餐', start: '10:30', end: '14:00' },",
+      "          { id: 'dinner', label: '晚餐', start: '16:30', end: '19:30' }",
+      '        ])',
+      '    },',
+      environmentAnchor
+    ].join('\n');
     next = replaceOnce(
       next,
-      "    checkinSettings: {\n      enabled: checkinSettings.enabled !== false,\n      activeStartDate: checkinSettings.activeStartDate || values.startDate || '',\n      activeEndDate: checkinSettings.activeEndDate || values.endDate || '',\n      dailyStart: checkinSettings.dailyStart || '00:00',\n      dailyEnd: checkinSettings.dailyEnd || '23:59',\n      weekdays: Array.isArray(checkinSettings.weekdays) && checkinSettings.weekdays.length\n        ? checkinSettings.weekdays.map(Number).filter((day) => day >= 1 && day <= 7)\n        : [1, 2, 3, 4, 5, 6, 7],\n      personalImageLimit: Math.min(8, Math.max(1, Number(checkinSettings.personalImageLimit || 3))),\n      teamImageLimit: Math.min(8, Math.max(1, Number(checkinSettings.teamImageLimit || 3)))\n    },\n    environment: env.ENVIRONMENT || 'unknown'",
-      "    checkinSettings: {\n      enabled: checkinSettings.enabled !== false,\n      activeStartDate: checkinSettings.activeStartDate || values.startDate || '',\n      activeEndDate: checkinSettings.activeEndDate || values.endDate || '',\n      dailyStart: checkinSettings.dailyStart || '00:00',\n      dailyEnd: checkinSettings.dailyEnd || '23:59',\n      weekdays: Array.isArray(checkinSettings.weekdays) && checkinSettings.weekdays.length\n        ? checkinSettings.weekdays.map(Number).filter((day) => day >= 1 && day <= 7)\n        : [1, 2, 3, 4, 5, 6, 7],\n      personalImageLimit: Math.min(8, Math.max(1, Number(checkinSettings.personalImageLimit || 3))),\n      teamImageLimit: Math.min(8, Math.max(1, Number(checkinSettings.teamImageLimit || 3)))\n    },\n    healthCheckinSettings: {\n      enabled: healthCheckinSettings.enabled !== false && values.trackEnabled?.health !== false,\n      activeStartDate: healthCheckinSettings.activeStartDate || values.startDate || '',\n      activeEndDate: healthCheckinSettings.activeEndDate || values.endDate || '',\n      weekdays: Array.isArray(healthCheckinSettings.weekdays) && healthCheckinSettings.weekdays.length\n        ? healthCheckinSettings.weekdays.map(Number).filter((day) => day >= 1 && day <= 7)\n        : [1, 2, 3, 4, 5, 6, 7],\n      personalImageLimit: Math.min(8, Math.max(1, Number(healthCheckinSettings.personalImageLimit || 3))),\n      slots: Array.isArray(healthCheckinSettings.slots) && healthCheckinSettings.slots.length\n        ? healthCheckinSettings.slots\n        : (values.slots || [\n          { id: 'breakfast', label: '早餐', start: '06:50', end: '10:00' },\n          { id: 'lunch', label: '午餐', start: '10:30', end: '14:00' },\n          { id: 'dinner', label: '晚餐', start: '16:30', end: '19:30' }\n        ])\n    },\n    environment: env.ENVIRONMENT || 'unknown'",
+      environmentAnchor,
+      healthSettings,
       '健康自律设置返回值'
     );
     next = marker + '\n' + next;

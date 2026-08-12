@@ -8,6 +8,7 @@ const vendorTarget = path.resolve('public/vendor/image-blob-reduce-5.0.1.min.js'
 const runtimeTemplatePath = path.resolve('templates/pica-image-pipeline-runtime.txt');
 const genericFlowTemplatePath = path.resolve('templates/pica-generic-upload-flow.txt');
 const memberFlowTemplatePath = path.resolve('templates/pica-member-upload-flow.txt');
+const studentFlowTemplatePath = path.resolve('scripts/student-admin-flow.template.js');
 const marker = '/* PICA_IMAGE_PIPELINE_V1 */';
 
 const replaceOnce = (source, search, replacement, label) => {
@@ -21,6 +22,15 @@ const replaceRegexOnce = (source, pattern, replacement, label) => {
   return source.replace(pattern, replacement.trimEnd());
 };
 
+const extractSegment = (source, name) => {
+  const start = `/* ${name}_START */`;
+  const end = `/* ${name}_END */`;
+  const startIndex = source.indexOf(start);
+  const endIndex = source.indexOf(end);
+  if (startIndex < 0 || endIndex <= startIndex) throw new Error(`${name} template segment is missing`);
+  return source.slice(startIndex + start.length, endIndex).trim();
+};
+
 await mkdir(path.dirname(vendorTarget), { recursive: true });
 await copyFile(vendorSource, vendorTarget);
 
@@ -29,6 +39,7 @@ const [runtimeTemplate, genericFlowTemplate, memberFlowTemplate] = await Promise
   readFile(genericFlowTemplatePath, 'utf8'),
   readFile(memberFlowTemplatePath, 'utf8')
 ]);
+const studentFlowTemplate = await readFile(studentFlowTemplatePath, 'utf8');
 
 let app = await readFile(appPath, 'utf8');
 if (!app.includes(marker)) {
@@ -60,13 +71,18 @@ if (!app.includes(marker)) {
     '通用图片双版本上传流程'
   );
 
-  app = replaceRegexOnce(
-    app,
-    /      item\.compressed = await compressMemberCheckinImage\(sourceFile,[\s\S]*?      item\.mediaId = [^;]+;/,
-    memberFlowTemplate,
-    '个人打卡高清图与缩略图上传流程'
-  );
+  await writeFile(appPath, app, 'utf8');
+}
 
+// Personal/member check-ins use the dedicated single-object fast endpoint. The
+// generic Pica pair is retained for task/plaza uploads, but must not overwrite
+// the lower-latency multi-image member flow generated earlier.
+if (!app.includes('uploadMemberCheckinFast(')
+    || /function memberCheckinForm\(task\) \{[\s\S]*?uploadPreparedImagePair\(/.test(app)) {
+  const memberCheckin = extractSegment(studentFlowTemplate, 'FRONTEND_MEMBER_CHECKIN');
+  const memberPattern = /function memberCheckinForm\(task\) \{[\s\S]*?\r?\n\}\s*(?=function materialSubmissionForm)/;
+  if (!memberPattern.test(app)) throw new Error('个人打卡fast多图流程未找到');
+  app = app.replace(memberPattern, () => `${memberCheckin}\n\n`);
   await writeFile(appPath, app, 'utf8');
 }
 

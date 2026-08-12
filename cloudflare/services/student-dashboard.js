@@ -1,3 +1,6 @@
+/* APPROVED_MOBILE_EXPERIENCE_FINALIZED_V1 */
+/* APPROVED_MOBILE_EXPERIENCE_BACKEND_V1 */
+/* CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1 */
 import {
   hasMakeupPermission,
   parseJson,
@@ -80,6 +83,7 @@ export const isTaskOccurrence = (task, occurrenceDate = '') => {
 };
 
 export const taskWindowOpen = (task, occurrenceDate = '', makeupAllowed = false) => {
+  if (task?.checkinEnabled === false) return false;
   if (!isTaskOccurrence(task, occurrenceDate)) return false;
   if (makeupAllowed) return true;
   const schedule = task.scheduleJson ? parseJson(task.scheduleJson, null) : null;
@@ -87,6 +91,49 @@ export const taskWindowOpen = (task, occurrenceDate = '', makeupAllowed = false)
   if (schedule.dailyStart && shanghaiTime() < schedule.dailyStart) return false;
   if (schedule.dailyEnd && shanghaiTime() > schedule.dailyEnd) return false;
   return true;
+};
+
+/* FINAL_CHECKIN_SETTINGS_V1 */
+export const applyInteractionCheckinSettings = (task, config) => {
+  if (!task || task.trackId !== 'interaction') return task;
+  const settingsConfigured = config?.checkinSettingsConfigured === true;
+  if (!settingsConfigured) {
+    return {
+      ...task,
+      checkinEnabled: task.checkinEnabled !== false,
+      imageLimit: Math.min(8, Math.max(1, Number(task.imageLimit || 3))),
+      memberImageLimit: Math.min(8, Math.max(1, Number(task.memberImageLimit || task.imageLimit || 1)))
+    };
+  }
+  const settings = config?.checkinSettings || {};
+  const existing = task.scheduleJson ? parseJson(task.scheduleJson, {}) : {};
+  const activeStartDate = settings.activeStartDate || existing.activeStartDate || config?.startDate || shanghaiDate();
+  const activeEndDate = settings.activeEndDate || existing.activeEndDate || config?.endDate || activeStartDate;
+  const dailyStart = settings.dailyStart || existing.dailyStart || '00:00';
+  const dailyEnd = settings.dailyEnd || existing.dailyEnd || '23:59';
+  const weekdays = Array.isArray(settings.weekdays) && settings.weekdays.length
+    ? settings.weekdays.map(Number).filter((day) => day >= 1 && day <= 7)
+    : (Array.isArray(existing.weekdays) && existing.weekdays.length
+      ? existing.weekdays.map(Number).filter((day) => day >= 1 && day <= 7)
+      : [1, 2, 3, 4, 5, 6, 7]);
+  const schedule = {
+    scheduleType: 'weekly',
+    activeStartDate,
+    activeEndDate,
+    dailyStart,
+    dailyEnd,
+    weekdays,
+    refreshDays: []
+  };
+  return {
+    ...task,
+    checkinEnabled: settings.enabled !== false,
+    imageLimit: Math.min(8, Math.max(1, Number(settings.teamImageLimit || task.imageLimit || 3))),
+    memberImageLimit: Math.min(8, Math.max(1, Number(settings.personalImageLimit || task.memberImageLimit || task.imageLimit || 1))),
+    scheduleJson: JSON.stringify(schedule),
+    startsAt: `${activeStartDate}T${dailyStart}:00+08:00`,
+    endsAt: `${activeEndDate}T${dailyEnd}:00+08:00`
+  };
 };
 
 export const submissionOwner = async (env, user, task) => {
@@ -151,6 +198,43 @@ export const submissionImagesForIds = async (env, submissionIds, viewer) => {
   return grouped;
 };
 
+/* STRICT_P95_DASHBOARD_BATCH_V4 */
+export const buildStudentTeamContext = async (env, user) => {
+  if (user.role !== 'student' || user.trackId !== 'interaction') {
+    return { team: null, members: [], teamCount: null };
+  }
+  const [countRow, memberPage] = await Promise.all([
+    env.DB.prepare('SELECT COUNT(*) AS total FROM teams').first(),
+    env.DB.prepare(
+      `SELECT t.id AS teamId,t.name AS teamName,t.invite_code AS inviteCode,
+              t.member_limit AS memberLimit,t.captain_user_id AS captainId,t.created_at AS teamCreatedAt,
+              u.id AS memberId,u.student_id AS memberStudentId,u.name AS memberName,u.campus AS memberCampus,
+              u.track_id AS memberTrackId,u.status AS memberStatus,u.created_at AS memberCreatedAt
+         FROM team_members mine
+         JOIN teams t ON t.id=mine.team_id
+         LEFT JOIN team_members tm ON tm.team_id=t.id
+         LEFT JOIN users u ON u.id=tm.user_id
+        WHERE mine.user_id=?1
+        ORDER BY tm.joined_at,u.student_id`
+    ).bind(user.id).all()
+  ]);
+  const rows = memberPage.results || [];
+  if (!rows.length || !rows[0].teamId) {
+    return { team: null, members: [], teamCount: Number(countRow?.total || 0) };
+  }
+  const first = rows[0];
+  const team = {
+    id: first.teamId, name: first.teamName, inviteCode: first.inviteCode,
+    memberLimit: first.memberLimit, captainId: first.captainId, createdAt: first.teamCreatedAt
+  };
+  const members = rows.filter((row) => row.memberId).map((row) => ({
+    id: row.memberId, studentId: row.memberStudentId, name: row.memberName,
+    campus: row.memberCampus, trackId: row.memberTrackId, status: row.memberStatus,
+    createdAt: row.memberCreatedAt
+  }));
+  return { team, members, teamCount: Number(countRow?.total || 0) };
+};
+
 export const buildStudentTasks = async (env, user, options = {}) => {
   const config = options.config || await readConfig(env);
   if (user.role === 'student' && (!config.activityEnabled || !config.trackEnabled[user.trackId])) {
@@ -162,24 +246,37 @@ export const buildStudentTasks = async (env, user, options = {}) => {
       }
     };
   }
-  const { results } = await env.DB.prepare(
-    `SELECT id,name,description,track_id AS trackId,starts_at AS startsAt,ends_at AS endsAt,
-            allow_late AS allowLate,image_limit AS imageLimit,copy_requirement AS copyRequirement,
-            submission_type AS submissionType,status,schedule_json AS scheduleJson
-       FROM tasks WHERE status='published' AND (?1='admin' OR track_id=?2)
-      ORDER BY starts_at DESC LIMIT 100`
-  ).bind(user.role, user.trackId || '').all();
   const today = options.date || shanghaiDate();
-  const makeupAllowed = user.role === 'student'
-    ? await hasMakeupPermission(env, user.id, today) : false;
-  const visibleTasks = results.filter(
+  const taskPagePromise = options.taskPage
+    ? Promise.resolve(options.taskPage)
+    : env.DB.prepare(
+      `SELECT id,name,description,track_id AS trackId,starts_at AS startsAt,ends_at AS endsAt,
+              allow_late AS allowLate,image_limit AS imageLimit,copy_requirement AS copyRequirement,
+              submission_type AS submissionType,status,schedule_json AS scheduleJson
+         FROM tasks WHERE status='published' AND (?1='admin' OR track_id=?2)
+        ORDER BY starts_at DESC LIMIT 100`
+    ).bind(user.role, user.trackId || '').all();
+  const makeupPromise = options.makeupAllowed !== undefined
+    ? Promise.resolve(Boolean(options.makeupAllowed))
+    : (user.role === 'student' ? hasMakeupPermission(env, user.id, today) : Promise.resolve(false));
+  const [taskPage, makeupAllowed] = await Promise.all([taskPagePromise, makeupPromise]);
+  const results = taskPage.results || [];
+  const effectiveTasks = results.map((task) => applyInteractionCheckinSettings(task, config));
+  const visibleTasks = effectiveTasks.filter(
     (task) => !task.scheduleJson || isTaskOccurrence(task, today)
   );
   const needsTeam = user.role === 'student' && visibleTasks.some(
     (task) => task.submissionType === 'team' || task.trackId === 'interaction'
   );
-  const team = needsTeam ? await teamForUser(env, user.id) : null;
-  const members = team ? await membersForTeam(env, team.id) : [];
+  const sharedTeamContext = options.teamContext || null;
+  const team = needsTeam
+    ? (sharedTeamContext ? sharedTeamContext.team : await teamForUser(env, user.id))
+    : null;
+  const members = team
+    ? (sharedTeamContext && sharedTeamContext.team?.id === team.id
+      ? sharedTeamContext.members
+      : await membersForTeam(env, team.id))
+    : [];
   const taskIds = unique(visibleTasks.map((task) => task.id));
   const occurrenceDates = unique(visibleTasks.map(
     (task) => (task.scheduleJson ? today : '')
@@ -194,8 +291,29 @@ export const buildStudentTasks = async (env, user, options = {}) => {
     if (team) ownerPairs.push({ type: 'team', id: team.id });
   }
 
-  const submissions = [];
-  if (taskIds.length && ownerPairs.length) {
+  const checkinsPromise = Array.isArray(options.checkins)
+    ? Promise.resolve(options.checkins)
+    : (team && taskIds.length)
+      ? (async () => {
+      const rows = [];
+      for (const taskChunk of chunks(taskIds, 75)) {
+        const taskIn = placeholders(taskChunk.length, 2);
+        const occurrenceStart = taskChunk.length + 2;
+        const occurrenceIn = placeholders(occurrenceDates.length, occurrenceStart);
+        const page = await env.DB.prepare(
+          `SELECT user_id AS userId,id,task_id AS taskId,occurrence_date AS occurrenceDate
+             FROM member_checkins
+            WHERE team_id=?1 AND task_id IN (${taskIn})
+              AND occurrence_date IN (${occurrenceIn})`
+        ).bind(team.id, ...taskChunk, ...occurrenceDates).all();
+        rows.push(...page.results);
+      }
+        return rows;
+      })()
+      : Promise.resolve([]);
+
+  const submissions = Array.isArray(options.submissions) ? [...options.submissions] : [];
+  if (!Array.isArray(options.submissions) && taskIds.length && ownerPairs.length) {
     for (const taskChunk of chunks(taskIds, 70)) {
       const values = [...taskChunk, ...occurrenceDates];
       const taskIn = placeholders(taskChunk.length);
@@ -219,11 +337,13 @@ export const buildStudentTasks = async (env, user, options = {}) => {
       submissions.push(...page.results);
     }
   }
-  const imagesBySubmission = await submissionImagesForIds(
-    env,
-    submissions.map((submission) => submission.id),
-    user
-  );
+  const imagesBySubmission = options.includeImages === false
+    ? new Map(submissions.map((submission) => [submission.id, []]))
+    : await submissionImagesForIds(
+      env,
+      submissions.map((submission) => submission.id),
+      user
+    );
   const submissionsByOwnerTask = new Map();
   for (const submission of submissions) {
     submission.images = imagesBySubmission.get(submission.id) || [];
@@ -233,21 +353,7 @@ export const buildStudentTasks = async (env, user, options = {}) => {
     );
   }
 
-  const checkins = [];
-  if (team && taskIds.length) {
-    for (const taskChunk of chunks(taskIds, 75)) {
-      const taskIn = placeholders(taskChunk.length, 2);
-      const occurrenceStart = taskChunk.length + 2;
-      const occurrenceIn = placeholders(occurrenceDates.length, occurrenceStart);
-      const page = await env.DB.prepare(
-        `SELECT user_id AS userId,id,task_id AS taskId,occurrence_date AS occurrenceDate
-           FROM member_checkins
-          WHERE team_id=?1 AND task_id IN (${taskIn})
-            AND occurrence_date IN (${occurrenceIn})`
-      ).bind(team.id, ...taskChunk, ...occurrenceDates).all();
-      checkins.push(...page.results);
-    }
-  }
+  const checkins = await checkinsPromise;
   const checkinsByTask = new Map();
   for (const checkin of checkins) {
     const key = `${checkin.taskId}|${checkin.occurrenceDate}`;
@@ -397,8 +503,17 @@ export const buildStudentMaterialTasks = async (env, user) => {
   return tasks;
 };
 
-export const buildTeamSummary = async (env, user, config) => {
+export const buildTeamSummary = async (env, user, config, options = {}) => {
   if (user.trackId !== 'interaction') return null;
+  const sharedTeamContext = options.teamContext || null;
+  if (sharedTeamContext) {
+    const team = sharedTeamContext.team;
+    return {
+      teamCount: Number(sharedTeamContext.teamCount || 0),
+      maxTeams: Number(config.maxTeams || 50),
+      team: team ? { ...team, members: sharedTeamContext.members, memberCount: sharedTeamContext.members.length } : null
+    };
+  }
   const [count, team] = await Promise.all([
     env.DB.prepare('SELECT COUNT(*) AS total FROM teams').first(),
     teamForUser(env, user.id)
@@ -415,13 +530,132 @@ export const buildTeamSummary = async (env, user, config) => {
   };
 };
 
+const buildCheckinStats = async (env, user) => {
+  const personalPromise = user.trackId === 'health'
+    ? env.DB.prepare("SELECT COUNT(DISTINCT checkin_date) AS total FROM checkins WHERE user_id=?1 AND status!='rejected'").bind(user.id).first()
+    : env.DB.prepare("SELECT COUNT(DISTINCT occurrence_date) AS total FROM member_checkins WHERE user_id=?1 AND status!='rejected'").bind(user.id).first();
+  const teamPromise = env.DB.prepare(
+    `SELECT COUNT(DISTINCT COALESCE(NULLIF(s.occurrence_date,''),substr(s.submitted_at,1,10))) AS total
+       FROM task_submissions s
+       JOIN team_members m ON m.team_id=s.owner_id
+      WHERE s.owner_type='team' AND m.user_id=?1 AND s.status IN ('submitted','approved')`
+  ).bind(user.id).first();
+  const [personal, team] = await Promise.all([personalPromise, teamPromise]);
+  return { personalDays: Number(personal?.total || 0), teamDays: Number(team?.total || 0) };
+};
+
+/* LOGIN_D1_BATCH_V6 */
+export const buildStudentDashboardForLogin = async (env, user) => {
+  if (user.role !== 'student' || user.trackId !== 'interaction' || typeof env.DB.batch !== 'function') {
+    return buildStudentDashboard(env, user);
+  }
+  const date = shanghaiDate();
+  try {
+    const configPromise = readConfig(env);
+    const statements = [
+      env.DB.prepare(
+        `SELECT t.id AS teamId,t.name AS teamName,t.invite_code AS inviteCode,
+                t.member_limit AS memberLimit,t.captain_user_id AS captainId,t.created_at AS teamCreatedAt,
+                u.id AS memberId,u.student_id AS memberStudentId,u.name AS memberName,u.campus AS memberCampus,
+                u.track_id AS memberTrackId,u.status AS memberStatus,u.created_at AS memberCreatedAt,
+                (SELECT COUNT(*) FROM teams) AS teamCount
+           FROM (SELECT 1) seed
+           LEFT JOIN team_members mine ON mine.user_id=?1
+           LEFT JOIN teams t ON t.id=mine.team_id
+           LEFT JOIN team_members tm ON tm.team_id=t.id
+           LEFT JOIN users u ON u.id=tm.user_id
+          ORDER BY tm.joined_at,u.student_id`
+      ).bind(user.id),
+      env.DB.prepare(
+        `SELECT id,name,description,track_id AS trackId,starts_at AS startsAt,ends_at AS endsAt,
+                allow_late AS allowLate,image_limit AS imageLimit,copy_requirement AS copyRequirement,
+                submission_type AS submissionType,status,schedule_json AS scheduleJson
+           FROM tasks WHERE status='published' AND track_id=?1
+          ORDER BY starts_at DESC LIMIT 100`
+      ).bind(user.trackId),
+      env.DB.prepare(
+        'SELECT enabled FROM makeup_permissions WHERE user_id=?1 AND checkin_date=?2'
+      ).bind(user.id, date),
+      env.DB.prepare(
+        `SELECT user_id AS userId,id,task_id AS taskId,occurrence_date AS occurrenceDate
+           FROM member_checkins
+          WHERE team_id=(SELECT team_id FROM team_members WHERE user_id=?1 LIMIT 1)
+            AND task_id IN (SELECT id FROM tasks WHERE status='published' AND track_id=?2)
+            AND occurrence_date IN (?3,'')`
+      ).bind(user.id, user.trackId, date),
+      env.DB.prepare(
+        `SELECT id,task_id AS taskId,owner_type AS ownerType,owner_id AS ownerId,
+                copy_text AS copy,plaza_copy AS plazaCopy,meal_type AS mealType,
+                is_public AS isPublic,status,version,occurrence_date AS occurrenceDate,
+                submitted_at AS submittedAt,review_note AS reviewNote
+           FROM task_submissions
+          WHERE task_id IN (SELECT id FROM tasks WHERE status='published' AND track_id=?1)
+            AND occurrence_date IN (?2,'')
+            AND ((owner_type='user' AND owner_id=?3) OR
+                 (owner_type='team' AND owner_id=(SELECT team_id FROM team_members WHERE user_id=?3 LIMIT 1)))`
+      ).bind(user.trackId, date, user.id),
+      env.DB.prepare(
+        `SELECT COUNT(DISTINCT occurrence_date) AS total
+           FROM member_checkins WHERE user_id=?1 AND status!='rejected'`
+      ).bind(user.id),
+      env.DB.prepare(
+        `SELECT COUNT(DISTINCT COALESCE(NULLIF(occurrence_date,''),substr(submitted_at,1,10))) AS total
+           FROM task_submissions
+          WHERE owner_type='team'
+            AND owner_id=(SELECT team_id FROM team_members WHERE user_id=?1 LIMIT 1)
+            AND status IN ('submitted','approved')`
+      ).bind(user.id)
+    ];
+    const [config, pages] = await Promise.all([configPromise, env.DB.batch(statements)]);
+    const teamRows = pages[0]?.results || [];
+    const first = teamRows[0] || null;
+    const team = first?.teamId ? {
+      id: first.teamId, name: first.teamName, inviteCode: first.inviteCode,
+      memberLimit: first.memberLimit, captainId: first.captainId, createdAt: first.teamCreatedAt
+    } : null;
+    const members = teamRows.filter((row) => row.memberId).map((row) => ({
+      id: row.memberId, studentId: row.memberStudentId, name: row.memberName,
+      campus: row.memberCampus, trackId: row.memberTrackId, status: row.memberStatus,
+      createdAt: row.memberCreatedAt
+    }));
+    const teamContext = { team, members, teamCount: Number(first?.teamCount || 0) };
+    const teamSummary = {
+      teamCount: teamContext.teamCount,
+      maxTeams: Number(config.maxTeams || 50),
+      team: team ? { ...team, members, memberCount: members.length } : null
+    };
+    const taskResult = await buildStudentTasks(env, user, {
+      config, date, teamContext, includeImages: false,
+      taskPage: { results: pages[1]?.results || [] },
+      makeupAllowed: Boolean(pages[2]?.results?.[0]?.enabled),
+      checkins: pages[3]?.results || [],
+      submissions: pages[4]?.results || []
+    });
+    return {
+      version: 1, user, config, tracks: TRACKS, date, time: shanghaiTime(), teamSummary,
+      tasks: taskResult.tasks, materialTasks: [],
+      checkinStats: {
+        personalDays: Number(pages[5]?.results?.[0]?.total || 0),
+        teamDays: Number(pages[6]?.results?.[0]?.total || 0)
+      },
+      switches: taskResult.switches
+    };
+  } catch {
+    return buildStudentDashboard(env, user);
+  }
+};
+
 export const buildStudentDashboard = async (env, user, options = {}) => {
   const date = options.date || shanghaiDate();
-  const config = options.config || await readConfig(env);
-  const [teamSummary, taskResult, materialTasks] = await Promise.all([
-    buildTeamSummary(env, user, config),
-    buildStudentTasks(env, user, { config, date }),
-    buildStudentMaterialTasks(env, user)
+  const [config, teamContext] = await Promise.all([
+    options.config ? Promise.resolve(options.config) : readConfig(env),
+    options.teamContext ? Promise.resolve(options.teamContext) : buildStudentTeamContext(env, user)
+  ]);
+  const teamSummary = await buildTeamSummary(env, user, config, { teamContext });
+  const [taskResult, materialTasks, checkinStats] = await Promise.all([
+    buildStudentTasks(env, user, { config, date, teamContext, includeImages: false }),
+    buildStudentMaterialTasks(env, user),
+    buildCheckinStats(env, user, teamSummary)
   ]);
   return {
     version: 1,
@@ -433,6 +667,7 @@ export const buildStudentDashboard = async (env, user, options = {}) => {
     teamSummary,
     tasks: taskResult.tasks,
     materialTasks,
+    checkinStats,
     switches: taskResult.switches
   };
 };

@@ -1,4 +1,6 @@
 /* PLAZA_MOBILE_LAYOUT_V1 */
+/* PLAZA_PERFORMANCE_QUALITY_V3 */
+/* MOBILE_REAL_UNDER_1S_V5 */
 const rebalancePlazaColumns = () => {
   const grid = document.querySelector('.plaza-grid');
   const columns = [...(grid?.querySelectorAll('[data-plaza-column]') || [])];
@@ -42,11 +44,13 @@ const renderPlazaPage = (result, sort, page, month, pageEpoch, options = {}) => 
     <article class="plaza-card" data-post="${post.id}" data-card-index="${cardIndex}" tabindex="0" role="button" aria-label="查看活动内容">
       <div class="image-shell plaza-card-cover">
         ${post.images[0]
-          ? `<img loading="${cardIndex === 0 ? 'eager' : 'lazy'}" decoding="async"
-              fetchpriority="${cardIndex === 0 ? 'high' : 'low'}"
-              data-priority="${cardIndex === 0 ? 'high' : 'low'}"
+          ? `<img loading="${cardIndex < 4 ? 'eager' : 'lazy'}" decoding="async"
+              fetchpriority="${cardIndex < 2 ? 'high' : cardIndex < 4 ? 'auto' : 'low'}"
+              data-priority="${cardIndex < 4 ? 'high' : 'low'}"
               data-perf-image="plaza-thumb" width="480" height="360"
-              data-src="${escapeHtml(post.images[0].thumbUrl || post.images[0].imageUrl)}"
+              ${cardIndex < 4
+                ? `src="${escapeHtml(post.images[0].thumbUrl || post.images[0].imageUrl)}"`
+                : `data-src="${escapeHtml(post.images[0].thumbUrl || post.images[0].imageUrl)}"`}
               alt="活动图片"
               onload="applyPlazaCoverRatio(this)"
               onerror="this.hidden=true;this.parentElement.classList.add('failed');requestAnimationFrame(rebalancePlazaColumns)">`
@@ -100,6 +104,7 @@ const renderPlazaPage = (result, sort, page, month, pageEpoch, options = {}) => 
     <div id="modalRoot"></div>`;
   prepareDynamicContent(app);
   requestAnimationFrame(rebalancePlazaColumns);
+  scheduleVisiblePlazaDetailWarmup();
   recordPerf('page-render', {
     page: 'plaza',
     duration: roundedDuration(renderStartedAt),
@@ -147,6 +152,8 @@ const renderPlazaPage = (result, sort, page, month, pageEpoch, options = {}) => 
 
 async function plaza(sort = 'latest', page = 1, month = '', query = '') {
   const pageEpoch = beginNavigation();
+  /* LAZY_PLAZA_ENTRY_V1 */
+  void window.__LOAD_PLAZA_EXTRAS__?.();
   const safeSort = sort === 'hot' ? 'hot' : 'latest';
   const safeQuery = String(query || '').trim().slice(0, 40);
   const cacheKey = scopedCacheKey('plaza', safeSort, page, safeQuery);
@@ -171,11 +178,15 @@ async function plaza(sort = 'latest', page = 1, month = '', query = '') {
         }
       }
     };
-    if (cacheIsFresh(cached)) queueMicrotask(() => { void refresh(); });
-    else void refresh();
+    if (cacheIsFresh(cached)) {
+      setTimeout(() => { void refresh(); }, 3200);
+    } else void refresh();
     return;
   }
-  const result = await api(path);
+  const bootstrapResult = safeSort === 'latest' && page === 1 && !safeQuery
+    ? await Promise.resolve(window.__BOOTSTRAP_PLAZA_PROMISE__).catch(() => null)
+    : null;
+  const result = bootstrapResult || await api(path);
   writeViewCache(plazaViewCache, cacheKey, result);
   renderPlazaPage(result, safeSort, page, '', pageEpoch, { query: safeQuery });
 }

@@ -1,10 +1,13 @@
+/* PLAZA_UNDER_1S_AND_MEMBER_IMAGE_LIMIT_V1 */
+/* APPROVED_CHECKIN_SETTINGS_TEMPLATE_V1 */
 /* STUDENT_ADMIN_FLOW_TEMPLATE_V2 */
 
 /* FRONTEND_MEMBER_CHECKIN_START */
 function memberCheckinForm(task) {
   beginNavigation();
   void loadImageCompressionLibrary().catch(() => {});
-  const maxImages = Math.max(1, Math.min(20, Number(task.imageLimit) || 1));
+  const maxImages = Math.max(1, Math.min(8,
+    Number(task.memberImageLimit || task.imageLimit) || 1));
   app.innerHTML = `<header class="hero"><h1>个人打卡</h1><p>${escapeHtml(task.name)}</p></header>
     <section class="card"><form id="memberSend">
       <div class="notice">姓名和学号由账号自动带入，请上传本人当天截图。</div>
@@ -213,8 +216,13 @@ function memberCheckinForm(task) {
         };
       });
       releaseSession();
+      recordPerf('submit', {
+        action: 'member-checkin', success: true,
+        imageCount: mediaIds.length, navigationEpoch
+      });
       returnToCachedStudentHome('个人打卡成功');
     } catch (error) {
+      recordPerf('submit', { action: 'member-checkin', success: false, navigationEpoch });
       alert(error?.message || '打卡提交失败，请稍后重试。');
       restoreButton();
       updateReadyState();
@@ -366,16 +374,19 @@ async function adminComments(page = 1) {
               image_limit AS imageLimit,schedule_json AS scheduleJson,status FROM tasks WHERE id=?1`
     ).bind(decodeURIComponent(memberMatch[1])).first();
     if (!task || task.status !== 'published' || task.trackId !== 'interaction') return json({ error: '任务不存在' }, 404);
+    const taskConfig = await readConfig(env);
+    const effectiveTask = applyInteractionCheckinSettings(task, taskConfig);
     const body = await readJson(request);
     const occurrenceDate = cleanText(body.occurrenceDate || shanghaiDate(), 10);
     const makeupAllowed = await hasMakeupPermission(env, user.id, occurrenceDate);
-    if (!taskWindowOpen(task, occurrenceDate, makeupAllowed)) return json({ error: '当前不在打卡时间范围内' }, 403);
+    if (!taskWindowOpen(effectiveTask, occurrenceDate, makeupAllowed)) return json({ error: '当前不在打卡时间范围内' }, 403);
     const team = await teamForUser(env, user.id);
     if (!team) return json({ error: '尚未分配队伍' }, 403);
     if (body.images?.length || body.photos?.length) {
       return json({ error: '旧版Base64图片上传已停用，请重新选择图片' }, 400);
     }
-    const imageLimit = Math.max(1, Number(task.imageLimit) || 1);
+    const imageLimit = Math.min(8, Math.max(1,
+      Number(effectiveTask.memberImageLimit || effectiveTask.imageLimit) || 1));
     const uploaded = await claimConfirmedMedia(
       env, body.mediaIds, user, task.id, 'member-checkin', imageLimit, { loadThumb: false }
     );

@@ -1,4 +1,7 @@
+/* PLAZA_DETAIL_INSTANT_OPEN_V2 */
 import { json, nowIso, requireUser, shanghaiDate } from '../lib/runtime.js';
+
+/* PLAZA_SERVICE_ROUTE_V1 */
 
 let schemaReady;
 const ensureInteractionSchema = (env) => {
@@ -22,7 +25,8 @@ const ensureInteractionSchema = (env) => {
 };
 
 const postDetails = async (env, post, userId = null) => {
-  const [members, images, counts, liked] = await Promise.all([
+  /* PLAZA_DETAIL_INSTANT_OPEN_V2 */
+  const [members, images, counts] = await Promise.all([
     env.DB.prepare(
     `SELECT u.id,u.name,u.student_id AS studentId,u.campus
        FROM team_members tm JOIN users u ON u.id=tm.user_id
@@ -44,12 +48,10 @@ const postDetails = async (env, post, userId = null) => {
        (SELECT COUNT(*) FROM plaza_likes WHERE post_id=?1) AS likes,
        (SELECT COUNT(*) FROM plaza_views WHERE post_id=?1) AS views,
        (SELECT COUNT(*) FROM plaza_comments WHERE post_id=?1 AND status='visible') AS comments,
+       EXISTS(SELECT 1 FROM plaza_likes WHERE post_id=?1 AND user_id=?2) AS liked,
        (SELECT COUNT(*) FROM plaza_likes
          WHERE user_id=?2 AND date(liked_at,'+8 hours')=?3) AS userLikesToday`
-    ).bind(post.id, userId || '', shanghaiDate()).first(),
-    userId ? env.DB.prepare(
-    'SELECT 1 AS liked FROM plaza_likes WHERE post_id=?1 AND user_id=?2'
-    ).bind(post.id, userId).first() : Promise.resolve(null)
+    ).bind(post.id, userId || '', shanghaiDate()).first()
   ]);
   return {
     ...post,
@@ -65,7 +67,7 @@ const postDetails = async (env, post, userId = null) => {
     viewCount: Number(counts.views),
     commentCount: Number(counts.comments),
     likeQuota: { used: Number(counts.userLikesToday), remaining: Math.max(0, 5 - Number(counts.userLikesToday)) },
-    liked: Boolean(liked)
+    liked: Boolean(counts.liked)
   };
 };
 
@@ -137,7 +139,7 @@ export const calculateRankings = async (env, period, key) => {
   };
 };
 
-export const handlePlazaRoutes = async (request, env, ctx, url) => {
+export const handlePlazaRoutes = async (request, env, ctx, url, authenticatedUser = null) => {
   const route = url.pathname;
   if (route !== '/api/rankings'
       && route !== '/api/plaza'
@@ -160,29 +162,36 @@ export const handlePlazaRoutes = async (request, env, ctx, url) => {
     return response;
   }
 
-  const auth = await requireUser(request, env);
+  const auth = authenticatedUser ? { user: authenticatedUser } : await requireUser(request, env);
   if (auth.error) return auth.error;
   const user = auth.user;
-  await ensureInteractionSchema(env);
+  if (env.SKIP_RUNTIME_SCHEMA !== 'true') await ensureInteractionSchema(env);
 
+  /* PLAZA_MOBILE_LAYOUT_V1 */
   if (route === '/api/plaza' && request.method === 'GET') {
     const page = Math.max(1, Number(url.searchParams.get('page') || 1));
     const limit = Math.min(20, Math.max(1, Number(url.searchParams.get('limit') || 20)));
-    const sort = url.searchParams.get('sort') || 'latest';
+    const sort = ['latest', 'hot', 'monthly'].includes(url.searchParams.get('sort'))
+      ? url.searchParams.get('sort') : 'latest';
     const month = /^\d{4}-\d{2}$/.test(url.searchParams.get('month') || '')
       ? url.searchParams.get('month') : shanghaiDate().slice(0, 7);
+    const search = String(url.searchParams.get('q') || '').trim().slice(0, 40);
+    const searchLike = search ? `%${search.replace(/[!%_]/g, '!$&')}%` : '';
+    const monthValue = sort === 'monthly' ? month : '';
     const order = sort === 'hot'
-      ? '(SELECT COUNT(*) FROM plaza_likes WHERE post_id=p.id) + (SELECT COUNT(*) FROM plaza_views WHERE post_id=p.id) DESC'
+      ? '(SELECT COUNT(*) FROM plaza_likes WHERE post_id=p.id) + (SELECT COUNT(*) FROM plaza_views WHERE post_id=p.id) DESC, p.published_at DESC'
       : 'p.published_at DESC';
-    const monthFilter = sort === 'monthly'
-      ? "AND strftime('%Y-%m',p.published_at,'+8 hours')=?2" : '';
-    const params = sort === 'monthly'
-      ? [user.id, month, limit, (page - 1) * limit]
-      : [user.id, limit, (page - 1) * limit];
-    const countQuery = `SELECT COUNT(*) AS total
-       FROM plaza_posts p
-      WHERE p.status='visible' ${sort === 'monthly'
-        ? "AND strftime('%Y-%m',p.published_at,'+8 hours')=?1" : ''}`;
+    const sharedFilter = `
+      WHERE p.status='visible'
+        AND (?2='' OR t.name LIKE ?2 ESCAPE '!'
+          OR task.name LIKE ?2 ESCAPE '!'
+          OR p.copy_text LIKE ?2 ESCAPE '!'
+          OR EXISTS (
+            SELECT 1 FROM team_members search_tm
+            JOIN users search_u ON search_u.id=search_tm.user_id
+            WHERE search_tm.team_id=p.team_id AND search_u.name LIKE ?2 ESCAPE '!'
+          ))
+        AND (?3='' OR strftime('%Y-%m',p.published_at,'+8 hours')=?3)`;
     const query = `SELECT p.id,p.submission_id AS submissionId,p.team_id AS teamId,
           t.name AS teamName,task.name AS taskName,p.copy_text AS copy,p.published_at AS publishedAt,
           COALESCE((SELECT u.name FROM team_members tm JOIN users u ON u.id=tm.user_id
@@ -203,13 +212,15 @@ export const handlePlazaRoutes = async (request, env, ctx, url) => {
             WHERE i.submission_id=p.submission_id ORDER BY i.sort_order LIMIT 1) AS displayVersion
        FROM plaza_posts p JOIN teams t ON t.id=p.team_id
        JOIN task_submissions s ON s.id=p.submission_id JOIN tasks task ON task.id=s.task_id
-      WHERE p.status='visible' ${monthFilter} ORDER BY ${order}
-      LIMIT ?${params.length - 1} OFFSET ?${params.length}`;
+       ${sharedFilter}
+       ORDER BY ${order} LIMIT ?4 OFFSET ?5`;
+    const countQuery = `SELECT COUNT(*) AS total
+       FROM plaza_posts p JOIN teams t ON t.id=p.team_id
+       JOIN task_submissions s ON s.id=p.submission_id JOIN tasks task ON task.id=s.task_id
+       ${sharedFilter.replaceAll('?2', '?1').replaceAll('?3', '?2')}`;
     const [{ results }, count] = await Promise.all([
-      env.DB.prepare(query).bind(...params).all(),
-      sort === 'monthly'
-        ? env.DB.prepare(countQuery).bind(month).first()
-        : env.DB.prepare(countQuery).first()
+      env.DB.prepare(query).bind(user.id, searchLike, monthValue, limit, (page - 1) * limit).all(),
+      env.DB.prepare(countQuery).bind(searchLike, monthValue).first()
     ]);
     const posts = results.map((post) => ({
       ...post,
@@ -226,7 +237,7 @@ export const handlePlazaRoutes = async (request, env, ctx, url) => {
       }] : []
     }));
     const total = Number(count?.total || 0);
-    return json({ posts, page, limit, month, total, hasMore: page * limit < total });
+    return json({ posts, page, limit, month, query: search, total, hasMore: page * limit < total });
   }
 
   const detailMatch = route.match(/^\/api\/plaza\/([^/]+)$/);

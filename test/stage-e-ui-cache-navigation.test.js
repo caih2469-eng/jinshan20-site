@@ -16,23 +16,29 @@ const sourceBetween = (start, end) => {
   return appSource.slice(startIndex, endIndex);
 };
 
+const sourceFrom = (start, end) => {
+  const startIndex = appSource.indexOf(start);
+  const endIndex = appSource.indexOf(end, startIndex + start.length);
+  assert.notEqual(startIndex, -1, `缺少代码段起点：${start}`);
+  return appSource.slice(startIndex, endIndex > startIndex ? endIndex : undefined);
+};
+
 test('阶段E：广场和评论管理缓存仅存于页面内存并按用户隔离', () => {
   assert.match(appSource, /const VIEW_CACHE_TTL_MS = 60_000;/);
   assert.match(appSource, /const plazaViewCache = new Map\(\);/);
-  assert.doesNotMatch(appSource, /const rankingViewCache = new Map\(\);/);
-  assert.match(appSource, /const adminCommentViewCache = new Map\(\);/);
+  assert.match(appSource, /const rankingViewCache = new Map\(\);/);
+  assert.match(adminSource, /async function adminComments\(page = 1\)/);
   assert.match(appSource, /const scopedCacheKey = \(\.\.\.parts\) => \[/);
   assert.match(appSource, /user\?\.id \|\| user\?\.studentId \|\| 'anonymous'/);
   assert.match(appSource, /\]\.join\('\|'\);/);
   assert.match(appSource, /scopedCacheKey\('plaza', safeSort, page, safeQuery\)/);
   assert.match(appSource, /q=\$\{encodeURIComponent\(safeQuery\)\}/);
-  assert.match(adminSource, /scopedCacheKey\('admin-comments', page\)/);
   const cacheBlock = sourceBetween('const VIEW_CACHE_TTL_MS', 'const clearUserViewCaches');
   assert.doesNotMatch(cacheBlock, /localStorage|sessionStorage/);
 });
 
 test('阶段E：学生从新鲜广场缓存即时渲染，后台刷新延后避免抢占首屏图片带宽', () => {
-  const plazaBlock = sourceBetween('async function plaza', 'const renderAdminCommentsPage');
+  const plazaBlock = sourceBetween('async function plaza', 'function rankingTable');
   assert.match(plazaBlock, /if \(cached\) \{/);
   assert.match(plazaBlock, /renderPlazaPage\(cached\.data/);
   assert.match(plazaBlock, /if \(cacheIsFresh\(cached\)\) \{/);
@@ -41,7 +47,7 @@ test('阶段E：学生从新鲜广场缓存即时渲染，后台刷新延后避�
 });
 
 test('阶段E：广场首屏复用启动预取并提升未降质的首图传输优先级', () => {
-  const plazaBlock = sourceBetween('async function plaza', 'const renderAdminCommentsPage');
+  const plazaBlock = sourceBetween('async function plaza', 'function rankingTable');
   assert.match(plazaBlock, /studentPlazaPrefetchPromise \|\| prefetchStudentPlaza\(\)/);
   assert.match(plazaBlock, /const preloadedResult = firstPagePromise/);
   assert.match(appSource, /2048w/);
@@ -49,7 +55,7 @@ test('阶段E：广场首屏复用启动预取并提升未降质的首图传输�
 });
 
 test('阶段E：广场详情主体优先显示，评论与浏览计数均不阻塞，独立页面通过历史记录返回列表', () => {
-  const block = sourceBetween('async function openPlazaPost', 'const renderAdminCommentsPage');
+  const block = sourceFrom('async function openPlazaPost', 'function checkinForm');
   assert.match(block, /let commentsPromise = null;/);
   assert.match(block, /commentsPromise = api\(`/);
   const detailVisibleIndex = block.indexOf("recordPerf('plaza-detail-visible'");

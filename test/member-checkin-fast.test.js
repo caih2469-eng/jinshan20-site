@@ -55,11 +55,22 @@ const createState = () => ({
     status: 'published'
   },
   teamMembers: new Set(['student-1', 'student-2']),
+  checkinSettings: {
+    enabled: true,
+    activeStartDate: '2020-01-01',
+    activeEndDate: '2035-01-01',
+    dailyStart: '00:00',
+    dailyEnd: '23:59',
+    weekdays: [1, 2, 3, 4, 5, 6, 7],
+    personalImageLimit: 3,
+    teamImageLimit: 3
+  },
   intents: new Map(),
   media: new Map(),
   objects: new Map(),
   makeup: false,
   failBatch: false,
+  d1Batches: 0,
   puts: 0,
   deletes: 0
 });
@@ -94,16 +105,28 @@ class Statement {
     }
     if (/FROM makeup_permissions/i.test(sql)) return { enabled: state.makeup ? 1 : 0 };
     if (/FROM media_upload_intents WHERE id/i.test(sql)) return state.intents.get(args[0]) || null;
-    if (/FROM media_objects WHERE id/i.test(sql)) {
+    if (/FROM media_objects(?: m JOIN media_upload_intents i ON i\.id=m\.id)? WHERE (?:m\.)?id/i.test(sql)) {
       const media = state.media.get(args[0]) || null;
       if (!media) return null;
       if (args[1] && media.ownerUserId !== args[1]) return null;
-      return { ...media };
+      return {
+        ...media,
+        status: state.intents.get(args[0])?.status
+      };
     }
     return null;
   }
 
   async all() {
+    if (/SELECT key, value_json AS valueJson FROM app_config/i.test(this.sql)) {
+      if (!this.state.checkinSettings) return { results: [] };
+      return {
+        results: [{
+          key: 'checkinSettings',
+          valueJson: JSON.stringify(this.state.checkinSettings)
+        }]
+      };
+    }
     return { results: [] };
   }
 
@@ -163,6 +186,7 @@ const createEnv = (state) => ({
   DB: {
     prepare(sql) { return new Statement(state, sql); },
     async batch(statements) {
+      state.d1Batches += 1;
       if (state.failBatch) throw new Error('simulated D1 failure');
       const results = [];
       for (const statement of statements) results.push(await statement.run());
@@ -209,13 +233,15 @@ const requestFor = (token, bytes, headers = {}) => new Request(
   }
 );
 
-test('单人打卡前端只使用fast接口、最多三轮压缩且不生成缩略图', () => {
+test('个人打卡多图复用fast接口、每图最多三轮压缩且不生成缩略图', () => {
   const app = fs.readFileSync('public/app.js', 'utf8');
   const memberBody = app.match(
     /function memberCheckinForm\(task\) \{([\s\S]*?)\r?\n\}\r?\n\r?\nfunction materialSubmissionForm/
   )?.[1] || '';
   assert.match(memberBody, /uploadMemberCheckinFast/);
-  assert.match(memberBody, /mediaIds:\s*\[session\.mediaId\]/);
+  assert.match(memberBody, /multiple required/);
+  assert.match(memberBody, /session\?\.items\?\.map\(\(item\) => item\.mediaId\)/);
+  assert.match(memberBody, /mediaIds\s*\n\s*}\)/);
   assert.doesNotMatch(memberBody, /readFiles|uploadCompressedImage|upload-intents|thumb/i);
   assert.match(app, /const MEMBER_FAST_MAX_BYTES = 307_200/);
   assert.match(app, /\{ maxWidthOrHeight: 960, initialQuality: 0\.76, maxSizeMB: 0\.25 \}/);
@@ -244,6 +270,7 @@ test('fast接口一次写入一个私有R2对象和一个media对象，重复请
   assert.equal(state.objects.size, 1);
   assert.equal(state.media.size, 1);
   assert.equal(state.intents.get(VALID_KEY).status, 'confirmed');
+  assert.equal(state.d1Batches, 1, '首次fast上传的D1写入应合并为一个事务批次');
 
   const second = await worker.fetch(requestFor(token, bytes), env, { waitUntil() {} });
   assert.equal(second.status, 200);
@@ -316,6 +343,7 @@ test('fast接口严格校验幂等UUID和时间窗口，仅明确补卡权限可
     refreshDays: [1],
     ...closedWindow
   });
+  state.checkinSettings = null;
 
   const invalidKey = await worker.fetch(requestFor(token, webpBytes(), {
     'x-idempotency-key': 'not-a-uuid'

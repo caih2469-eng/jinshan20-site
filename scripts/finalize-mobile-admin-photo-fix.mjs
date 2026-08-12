@@ -21,6 +21,43 @@ const replaceOnce = (source, search, replacement, label) => {
 };
 
 {
+  const adminClientFile = path.join(root, 'public', 'admin-client.js');
+  const appFile = path.join(root, 'public', 'app.js');
+  const adminClient = fs.existsSync(adminClientFile) ? fs.readFileSync(adminClientFile, 'utf8') : '';
+  const app = fs.existsSync(appFile) ? fs.readFileSync(appFile, 'utf8') : '';
+  const usesLazyAdminClient = /function openAdminUserDrawer\(studentUser, (?:teams, )?date/.test(adminClient)
+    && adminClient.includes('/api/admin/users/${encodeURIComponent(studentUser.id)}/checkins');
+
+  if (app.includes('/* PICA_IMAGE_PIPELINE_V1 */')
+      && app.includes('PICA_THUMB_MAX_EDGE = 960')
+      && app.includes('function openAdminUserDrawer(studentUser, teams, date, tasks = [])')) {
+    console.log('Validated current Pica image quality and complete admin drawer functions.');
+    process.exit(0);
+  }
+
+  if (usesLazyAdminClient && app.includes('uploadMemberCheckinFast(')) {
+    const requiredPatterns = [
+      [/loading="\$\{(?:imageIndex|index) === 0 \? 'eager' : 'lazy'\}"/, 'first admin image eager loading'],
+      [/fetchpriority="\$\{(?:imageIndex|index) === 0 \? 'high' : '(?:auto|low)'\}"/, 'first admin image fetch priority'],
+      ['/api/admin/users/${encodeURIComponent(studentUser.id)}/checkins', 'admin check-in endpoint'],
+      ["['profile',", 'profile management section'],
+      ["['team',", 'team management section'],
+      ["['makeup',", 'make-up management section'],
+      ["['manage',", 'account management section']
+    ];
+    for (const [pattern, label] of requiredPatterns) {
+      const found = pattern instanceof RegExp ? pattern.test(adminClient) : adminClient.includes(pattern);
+      if (!found) throw new Error(`Missing ${label} in lazy admin client`);
+    }
+    if (!app.includes('/* MOBILE_ADMIN_PHOTO_FIX_V1 */')) {
+      throw new Error('Missing mobile admin photo compatibility marker');
+    }
+    console.log('Validated lazy admin photo implementation without rewriting newer dashboard functions.');
+    process.exit(0);
+  }
+}
+
+{
   const { file, source } = readRequired('scripts/apply-admin-dashboard-refactor.mjs');
   const next = source.replace(/202607(?:30-(?:flow2|adminphoto1|adminphoto2)|31-approved1)/g, version);
   if (!next.includes(version)) throw new Error('后台补丁缓存版本更新失败');
@@ -111,7 +148,7 @@ const replaceOnce = (source, search, replacement, label) => {
   const memberBody = app.match(
     /function memberCheckinForm\(task\) \{([\s\S]*?)\r?\n\}\r?\n\r?\nfunction materialSubmissionForm/
   )?.[1] || '';
-  assert.match(memberBody, /prepareImageVariantsMeasured\(sourceFile/);
+  assert.match(memberBody, /prepareImageVariantsMeasured\((?:sourceFile|selected\[index\])/);
   assert.match(memberBody, /uploadCompressedImage\(prepared\.display/);
   assert.match(memberBody, /variant:\s*'display'/);
   assert.match(memberBody, /uploadCompressedImage\(prepared\.thumb/);

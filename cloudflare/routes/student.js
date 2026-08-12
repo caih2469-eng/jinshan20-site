@@ -1,3 +1,9 @@
+/* PLAZA_UNDER_1S_AND_MEMBER_IMAGE_LIMIT_V1 */
+/* TRACK_AWARE_ADMIN_SETTINGS_V1 */
+/* APPROVED_LAYOUT_TEAM_DRAFT_720_V2 */
+/* APPROVED_MOBILE_EXPERIENCE_BACKEND_V1 */
+/* STUDENT_ADMIN_FLOW_BACKEND_V2 */
+/* CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1 */
 import {
   cleanText,
   errorResponse,
@@ -13,11 +19,14 @@ import {
   claimConfirmedMedia
 } from '../lib/runtime.js';
 import { createPrivateMediaUrl } from '../lib/media-signing.js';
+
+/* CHECKIN_SERVICE_ROUTE_V1 */
 import {
   buildStudentDashboard,
   buildStudentTasks,
   mapWithConcurrency,
-  submissionImagesForIds
+  submissionImagesForIds,
+  applyInteractionCheckinSettings
 } from '../services/student-dashboard.js';
 
 const teamForUser = async (env, userId) => env.DB.prepare(
@@ -76,8 +85,8 @@ const submissionOwner = async (env, user, task) => {
   return { type: 'user', id: user.id, team: null };
 };
 
-export const handleStudentRoutes = async (request, env, ctx, url) => {
-  const auth = await requireUser(request, env);
+export const handleStudentRoutes = async (request, env, ctx, url, authenticatedUser = null) => {
+  const auth = authenticatedUser ? { user: authenticatedUser } : await requireUser(request, env);
   if (auth.error) return auth.error;
   const user = auth.user;
   const route = url.pathname;
@@ -245,45 +254,66 @@ export const handleStudentRoutes = async (request, env, ctx, url) => {
       });
     }
 
-    const [count, records] = await Promise.all([
+    const [count, pageResult] = await Promise.all([
       env.DB.prepare(
         'SELECT COUNT(*) AS total FROM member_checkins WHERE user_id=?1'
       ).bind(user.id).first(),
       env.DB.prepare(
         `SELECT mc.id,mc.occurrence_date AS date,mc.status,mc.submitted_at AS submittedAt,
-                 t.name AS taskName,m.id AS mediaId,COALESCE(m.object_key,mc.object_key) AS objectKey,
-                 tm.id AS thumbMediaId,tm.object_key AS thumbObjectKey
+                 t.name AS taskName,mc.object_key AS legacyObjectKey
            FROM member_checkins mc JOIN tasks t ON t.id=mc.task_id
-           LEFT JOIN media_objects m ON m.business_id=mc.id AND m.business_type='member-checkin'
-           LEFT JOIN media_objects tm ON tm.business_id=m.id
-            AND tm.business_type IN ('member-checkin:thumb','admin-makeup:thumb')
           WHERE mc.user_id=?1 ORDER BY mc.occurrence_date DESC,mc.submitted_at DESC
           LIMIT ?2 OFFSET ?3`
       ).bind(user.id, limit, offset).all()
     ]);
-    records.results = await mapWithConcurrency(records.results, 6, async (record) => {
-      const displayUrl = record.objectKey
-        ? (record.mediaId
-          ? await createPrivateMediaUrl(env, record, 'owner', user.id)
-          : `/api/files/${record.id}`)
-        : null;
-      const thumbUrl = record.thumbMediaId
+    const records = pageResult.results;
+    const recordIds = records.map((record) => record.id);
+    let mediaRows = [];
+    if (recordIds.length) {
+      const recordPlaceholders = recordIds.map((_, index) => `?${index + 1}`).join(',');
+      const media = await env.DB.prepare(
+        `SELECT m.id,m.business_id AS checkinId,m.object_key AS objectKey,
+                tm.id AS thumbMediaId,tm.object_key AS thumbObjectKey
+           FROM media_objects m
+           LEFT JOIN media_objects tm ON tm.business_id=m.id
+            AND tm.business_type IN ('member-checkin:thumb','admin-makeup:thumb')
+          WHERE m.business_type='member-checkin'
+            AND m.business_id IN (${recordPlaceholders})
+          ORDER BY m.business_id,m.created_at,m.id`
+      ).bind(...recordIds).all();
+      mediaRows = media.results;
+    }
+    const signedMedia = await mapWithConcurrency(mediaRows, 6, async (media) => {
+      const displayUrl = await createPrivateMediaUrl(env, media, 'owner', user.id);
+      const thumbUrl = media.thumbMediaId
         ? await createPrivateMediaUrl(env, {
-          id: record.thumbMediaId,
-          objectKey: record.thumbObjectKey
+          id: media.thumbMediaId,
+          objectKey: media.thumbObjectKey
         }, 'owner', user.id)
         : displayUrl;
-      record.images = displayUrl ? [{ thumbUrl, displayUrl, imageUrl: thumbUrl }] : [];
-      return record;
+      return { ...media, thumbUrl, displayUrl, imageUrl: thumbUrl };
     });
+    const imagesByCheckin = new Map();
+    for (const image of signedMedia) {
+      if (!imagesByCheckin.has(image.checkinId)) imagesByCheckin.set(image.checkinId, []);
+      imagesByCheckin.get(image.checkinId).push(image);
+    }
+    for (const record of records) {
+      record.images = imagesByCheckin.get(record.id) || [];
+      if (!record.images.length && record.legacyObjectKey) {
+        const legacyUrl = `/api/files/${record.id}`;
+        record.images = [{ thumbUrl: legacyUrl, displayUrl: legacyUrl, imageUrl: legacyUrl }];
+      }
+      delete record.legacyObjectKey;
+    }
     const total = Number(count.total);
     return json({
       trackId: user.trackId,
       page,
       limit,
       total,
-      hasMore: offset + records.results.length < total,
-      records: records.results
+      hasMore: offset + records.length < total,
+      records
     });
   }
 
@@ -292,39 +322,50 @@ export const handleStudentRoutes = async (request, env, ctx, url) => {
     if (user.role !== 'student' || user.trackId !== 'interaction') return json({ error: '仅互动赛道可打卡' }, 403);
     const task = await env.DB.prepare(
       `SELECT id,track_id AS trackId,starts_at AS startsAt,ends_at AS endsAt,
-              schedule_json AS scheduleJson,status FROM tasks WHERE id=?1`
+              image_limit AS imageLimit,schedule_json AS scheduleJson,status FROM tasks WHERE id=?1`
     ).bind(decodeURIComponent(memberMatch[1])).first();
     if (!task || task.status !== 'published' || task.trackId !== 'interaction') return json({ error: '任务不存在' }, 404);
+    const taskConfig = await readConfig(env);
+    const effectiveTask = applyInteractionCheckinSettings(task, taskConfig);
     const body = await readJson(request);
     const occurrenceDate = cleanText(body.occurrenceDate || shanghaiDate(), 10);
     const makeupAllowed = await hasMakeupPermission(env, user.id, occurrenceDate);
-    if (!taskWindowOpen(task, occurrenceDate, makeupAllowed)) return json({ error: '当前不在打卡时间范围内' }, 403);
+    if (!taskWindowOpen(effectiveTask, occurrenceDate, makeupAllowed)) return json({ error: '当前不在打卡时间范围内' }, 403);
     const team = await teamForUser(env, user.id);
     if (!team) return json({ error: '尚未分配队伍' }, 403);
     if (body.images?.length || body.photos?.length) {
       return json({ error: '旧版Base64图片上传已停用，请重新选择图片' }, 400);
     }
+    const imageLimit = Math.min(8, Math.max(1,
+      Number(effectiveTask.memberImageLimit || effectiveTask.imageLimit) || 1));
     const uploaded = await claimConfirmedMedia(
-      env, body.mediaIds, user, task.id, 'member-checkin', 1, { loadThumb: false }
+      env, body.mediaIds, user, task.id, 'member-checkin', imageLimit, { loadThumb: false }
     );
     const old = await env.DB.prepare(
-      `SELECT c.id,COALESCE(m.object_key,c.object_key) AS objectKey,m.id AS mediaId,
-              tm.id AS thumbMediaId,tm.object_key AS thumbObjectKey
-         FROM member_checkins c
-         LEFT JOIN media_objects m ON m.business_id=c.id AND m.business_type='member-checkin'
-             LEFT JOIN media_objects tm ON tm.business_id=m.id
-              AND tm.business_type IN ('member-checkin:thumb','admin-makeup:thumb')
-        WHERE c.task_id=?1 AND c.occurrence_date=?2 AND c.user_id=?3`
+      `SELECT id,object_key AS legacyObjectKey FROM member_checkins
+        WHERE task_id=?1 AND occurrence_date=?2 AND user_id=?3`
     ).bind(task.id, occurrenceDate, user.id).first();
+    const oldMedia = old?.id ? await env.DB.prepare(
+      `SELECT m.id,m.object_key AS objectKey,tm.id AS thumbMediaId,tm.object_key AS thumbObjectKey
+         FROM media_objects m
+         LEFT JOIN media_objects tm ON tm.business_id=m.id
+          AND tm.business_type IN ('member-checkin:thumb','admin-makeup:thumb')
+        WHERE m.business_id=?1 AND m.business_type='member-checkin'`
+    ).bind(old.id).all() : { results: [] };
     const id = old?.id || crypto.randomUUID();
     try {
-      const statements = [
-        ...(old?.mediaId ? [env.DB.prepare('DELETE FROM media_objects WHERE id=?1').bind(old.mediaId)] : []),
-        ...(old?.thumbMediaId ? [env.DB.prepare('DELETE FROM media_objects WHERE id=?1').bind(old.thumbMediaId)] : []),
-        ...(old?.id ? [env.DB.prepare(
-          "DELETE FROM image_variants WHERE source_type='member_checkin' AND source_id=?1"
-        ).bind(old.id)] : []),
-        env.DB.prepare(
+      const submittedAt = nowIso();
+      const statements = [];
+      for (const previous of oldMedia.results) {
+        if (previous.thumbMediaId) statements.push(
+          env.DB.prepare('DELETE FROM media_objects WHERE id=?1').bind(previous.thumbMediaId)
+        );
+        statements.push(env.DB.prepare('DELETE FROM media_objects WHERE id=?1').bind(previous.id));
+      }
+      statements.push(env.DB.prepare(
+        "DELETE FROM image_variants WHERE source_type='member_checkin' AND source_id=?1"
+      ).bind(id));
+      statements.push(env.DB.prepare(
           `INSERT INTO member_checkins
           (id,task_id,occurrence_date,user_id,team_id,object_key,content_type,bytes,status,submitted_at)
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'submitted',?9)
@@ -333,36 +374,82 @@ export const handleStudentRoutes = async (request, env, ctx, url) => {
             content_type=excluded.content_type,bytes=excluded.bytes,status='submitted',
             submitted_at=excluded.submitted_at`
         ).bind(id, task.id, occurrenceDate, user.id, team.id, uploaded[0].objectKey,
-          uploaded[0].contentType, uploaded[0].bytes, nowIso()),
-        env.DB.prepare(
+          uploaded[0].contentType, uploaded[0].bytes, submittedAt));
+      for (const image of uploaded) {
+        statements.push(env.DB.prepare(
           `UPDATE media_objects SET business_id=?1,updated_at=?2
             WHERE id=?3 AND owner_user_id=?4 AND business_id IS NULL`
-        ).bind(id, nowIso(), uploaded[0].id, user.id)
-      ];
+        ).bind(id, submittedAt, image.id, user.id));
+      }
       statements.push(env.DB.prepare(
         `INSERT OR REPLACE INTO image_variants
           (source_type,source_id,variant,object_key,content_type,bytes,created_at)
          VALUES ('member_checkin',?1,'display',?2,?3,?4,?5)`
-      ).bind(id, uploaded[0].objectKey, uploaded[0].contentType, uploaded[0].bytes, nowIso()));
-      if (uploaded[0].thumb) {
-        statements.push(env.DB.prepare(
-          `INSERT OR REPLACE INTO image_variants
-            (source_type,source_id,variant,object_key,content_type,bytes,created_at)
-           VALUES ('member_checkin',?1,'thumb',?2,?3,?4,?5)`
-        ).bind(id, uploaded[0].thumb.objectKey, uploaded[0].thumb.contentType,
-          uploaded[0].thumb.bytes, nowIso()));
-      }
+      ).bind(id, uploaded[0].objectKey, uploaded[0].contentType, uploaded[0].bytes, submittedAt));
       await env.DB.batch(statements);
-      if (old?.objectKey) {
-        ctx.waitUntil(Promise.all([
-          env.UPLOADS.delete(old.objectKey),
-          ...(old.thumbObjectKey ? [env.UPLOADS.delete(old.thumbObjectKey)] : [])
-        ]));
-      }
-      return json({ ok: true, occurrenceDate });
+      const staleKeys = oldMedia.results.flatMap((item) => [
+        item.objectKey,
+        ...(item.thumbObjectKey ? [item.thumbObjectKey] : [])
+      ]).filter(Boolean);
+      if (old?.legacyObjectKey && !staleKeys.includes(old.legacyObjectKey)) staleKeys.push(old.legacyObjectKey);
+      if (staleKeys.length) ctx.waitUntil(Promise.all(staleKeys.map((key) => env.UPLOADS.delete(key))));
+      return json({ ok: true, occurrenceDate, imageCount: uploaded.length });
     } catch (error) {
       throw error;
     }
+  }
+
+  if (route === '/api/team-checkins/history' && request.method === 'GET') {
+    if (user.role !== 'student' || user.trackId !== 'interaction') return json({ error: '仅互动赛道可查看队伍记录' }, 403);
+    const team = await teamForUser(env, user.id);
+    if (!team) return json({ page: 1, limit: 20, total: 0, hasMore: false, records: [] });
+    const page = Math.max(1, Number(url.searchParams.get('page') || 1));
+    const limit = Math.min(20, Math.max(1, Number(url.searchParams.get('limit') || 20)));
+    const offset = (page - 1) * limit;
+    const [count, pageResult, members] = await Promise.all([
+      env.DB.prepare("SELECT COUNT(*) AS total FROM task_submissions WHERE owner_type='team' AND owner_id=?1 AND status IN ('submitted','approved')").bind(team.id).first(),
+      env.DB.prepare(
+        `SELECT s.id,s.task_id AS taskId,t.name AS taskName,s.occurrence_date AS date,
+                s.copy_text AS copy,s.status,s.submitted_at AS submittedAt
+           FROM task_submissions s JOIN tasks t ON t.id=s.task_id
+          WHERE s.owner_type='team' AND s.owner_id=?1 AND s.status IN ('submitted','approved')
+          ORDER BY s.occurrence_date DESC,s.submitted_at DESC LIMIT ?2 OFFSET ?3`
+      ).bind(team.id, limit, offset).all(),
+      membersForTeam(env, team.id)
+    ]);
+    const records = pageResult.results;
+    const imagesBySubmission = await submissionImagesForIds(env, records.map((record) => record.id), user);
+    let checkinRows = [];
+    if (records.length) {
+      const values = [team.id];
+      const conditions = records.map((record, index) => {
+        values.push(record.taskId, record.date || '');
+        const start = 2 + index * 2;
+        return `(task_id=?${start} AND occurrence_date=?${start + 1})`;
+      }).join(' OR ');
+      const result = await env.DB.prepare(
+        `SELECT task_id AS taskId,occurrence_date AS date,user_id AS userId
+           FROM member_checkins WHERE team_id=?1 AND (${conditions})`
+      ).bind(...values).all();
+      checkinRows = result.results;
+    }
+    const completedByKey = new Map();
+    for (const row of checkinRows) {
+      const key = `${row.taskId}|${row.date || ''}`;
+      if (!completedByKey.has(key)) completedByKey.set(key, new Set());
+      completedByKey.get(key).add(row.userId);
+    }
+    for (const record of records) {
+      const completed = completedByKey.get(`${record.taskId}|${record.date || ''}`) || new Set();
+      record.images = imagesBySubmission.get(record.id) || [];
+      record.teamProgress = {
+        total: members.length,
+        completed: completed.size,
+        members: members.map((member) => ({ ...member, checked: completed.has(member.id) }))
+      };
+    }
+    const total = Number(count?.total || 0);
+    return json({ page, limit, total, hasMore: offset + records.length < total, records });
   }
 
   const submissionMatch = route.match(/^\/api\/tasks\/([^/]+)\/submission$/);
@@ -381,11 +468,27 @@ export const handleStudentRoutes = async (request, env, ctx, url) => {
     if (!taskWindowOpen(task, occurrenceDate)) return json({ error: '当前不在任务提交时间范围内' }, 403);
     const owner = await submissionOwner(env, user, task);
     const intent = body.intent === 'draft' ? 'draft' : 'submitted';
+    if (intent === 'submitted' && owner.type === 'team' && user.role !== 'admin') {
+      if (!owner.team || owner.team.captainId !== user.id) {
+        return json({ error: '只有队长可以提交队伍作品' }, 403);
+      }
+      const [memberTotal, memberCompleted] = await Promise.all([
+        env.DB.prepare('SELECT COUNT(*) AS total FROM team_members WHERE team_id=?1').bind(owner.id).first(),
+        env.DB.prepare(
+          `SELECT COUNT(DISTINCT user_id) AS completed FROM member_checkins
+            WHERE team_id=?1 AND task_id=?2 AND occurrence_date=?3`
+        ).bind(owner.id, task.id, occurrenceDate).first()
+      ]);
+      const total = Number(memberTotal?.total || 0);
+      const completed = Number(memberCompleted?.completed || 0);
+      if (!total || completed < total) {
+        return json({ error: `需所有队员完成当天个人打卡后才能汇总提交（${completed}/${total}）` }, 409);
+      }
+    }
     const copy = cleanText(body.copy, 2000);
-    const plazaCopy = cleanText(body.plazaCopy, 2000);
+    const plazaCopy = cleanText(body.copy, 2000);
     const isPublic = task.trackId === 'interaction' && Boolean(body.isPublic);
     if (intent === 'submitted' && task.copyRequirement && !copy) return json({ error: '请填写活动文案' }, 400);
-    if (intent === 'submitted' && isPublic && !plazaCopy) return json({ error: '请填写广场作品文案' }, 400);
     const current = await env.DB.prepare(
       `SELECT id,status,version FROM task_submissions
         WHERE task_id=?1 AND owner_type=?2 AND owner_id=?3 AND occurrence_date=?4`
@@ -545,21 +648,35 @@ export const handleStudentRoutes = async (request, env, ctx, url) => {
 
   if (route === '/api/checkins' && request.method === 'POST') {
     if (user.role !== 'student') return json({ error: '管理员不能提交打卡' }, 403);
+    if (user.trackId !== 'health') return json({ error: '仅健康自律赛道可提交此类打卡' }, 403);
     const config = await readConfig(env);
-    if (!config.activityEnabled || !config.trackEnabled[user.trackId]) return json({ error: '活动当前未开放' }, 403);
+    const healthSettings = config.healthCheckinSettings || {};
+    if (!config.activityEnabled || !config.trackEnabled.health || healthSettings.enabled === false) return json({ error: '健康自律赛道当前未开放' }, 403);
     const body = await readJson(request);
     const date = cleanText(body.date, 10);
     const makeupAllowed = await hasMakeupPermission(env, user.id, date);
     if (date !== shanghaiDate() && !makeupAllowed) return json({ error: '只能提交当天材料' }, 403);
-    const slot = config.slots.find((item) => item.id === body.slotId);
+    if (!makeupAllowed) {
+      if ((healthSettings.activeStartDate && date < healthSettings.activeStartDate)
+          || (healthSettings.activeEndDate && date > healthSettings.activeEndDate)) {
+        return json({ error: '当前不在健康自律赛道活动日期内' }, 403);
+      }
+      const weekday = new Date(`${date}T12:00:00+08:00`).getUTCDay() || 7;
+      if (Array.isArray(healthSettings.weekdays) && healthSettings.weekdays.length
+          && !healthSettings.weekdays.includes(weekday)) {
+        return json({ error: '今天不开放健康自律赛道打卡' }, 403);
+      }
+    }
+    const slot = (healthSettings.slots || config.slots).find((item) => item.id === body.slotId);
     if (!slot || (!makeupAllowed && (shanghaiTime() < slot.start || shanghaiTime() > slot.end))) {
       return json({ error: '当前不在该时段' }, 403);
     }
     if (body.photos?.length || body.summary) {
       return json({ error: '旧版Base64图片上传已停用，请重新选择图片' }, 400);
     }
+    const healthPhotoLimit = Math.min(8, Math.max(1, Number(healthSettings.personalImageLimit || 3)));
     const photos = await claimConfirmedMedia(
-      env, body.photoMediaIds, user, null, 'meal-checkin', 3
+      env, body.photoMediaIds, user, null, 'meal-checkin', healthPhotoLimit
     );
     const summary = body.summaryMediaId
       ? (await claimConfirmedMedia(env, [body.summaryMediaId], user, null, 'meal-checkin', 1))[0]

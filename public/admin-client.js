@@ -33,633 +33,637 @@ async function adminComments(page = 1) {
   });
 }
 
-async function admin(selectedDate, pageEpoch = beginNavigation()) {
+async function legacyAdmin(selectedDate, pageEpoch = beginNavigation()) {
   if (!isCurrentNavigation(pageEpoch)) return;
   document.body.dataset.view = 'admin';
-  app.innerHTML = '<main class="app-shell-placeholder" aria-busy="true"><header class="hero"></header><section class="metric-grid"></section><section class="card"></section></main>';
-  const date = selectedDate || new Date().toLocaleDateString('en-CA', {
-    timeZone: 'Asia/Shanghai'
-  });
-  const [completion, userResult, teamResult, taskAdminResult, plazaAdminResult, overview, materialAdmin, governance] = await Promise.all([
-    api(`/api/admin/completion-summary?date=${date}`),
-    api(`/api/admin/users?page=${adminUserPage}&limit=30&q=${encodeURIComponent(adminUserQuery)}&completion=${adminUserFilter}&date=${date}&track=${adminCompletionTrack === 'all' ? '' : adminCompletionTrack}`),
-    api('/api/admin/teams'),
-    api('/api/admin/tasks'),
-    api('/api/admin/plaza?page=1&limit=30'),
-    api('/api/admin/overview'),
-    api(`/api/admin/material-tasks?page=${materialAdminPage}&limit=30&campus=${encodeURIComponent(materialAdminCampus)}`),
-    api('/api/admin/governance')
-  ]);
-  if (!isCurrentNavigation(pageEpoch)) return;
-  const users = userResult.users;
-  const userTiles = users.map((studentUser, index) => `
-    <button class="admin-user-tile ${studentUser.completed ? 'completed' : 'missing'}" data-id="${studentUser.id}">
-      <span class="user-number">${(userResult.page - 1) * userResult.limit + index + 1}</span>
-      <strong>${escapeHtml(studentUser.name)}</strong>
-      ${studentUser.completed ? '<span class="user-completion" aria-label="已完成">✓</span>' : ''}
-    </button>`).join('');
-  const overallSummary = completion.overall;
-  const interactionSummary = completion.tracks.find((item) => item.trackId === 'interaction')
-    || { completed: 0, total: 0 };
-  const healthSummary = completion.tracks.find((item) => item.trackId === 'health')
-    || { completed: 0, total: 0 };
-  const teamRows = teamResult.teams.map((team) => `
-    <tr>
-      <td>${escapeHtml(team.name)}<br><small>邀请码：<strong>${escapeHtml(team.inviteCode)}</strong></small></td>
-      <td>${team.memberCount}/${team.memberLimit}</td>
-      <td>
-        <div><strong>队长：${team.captain ? `${escapeHtml(team.captain.name)}（${escapeHtml(team.captain.studentId)}）` : '未指定'}</strong></div>
-        <div class="member-list compact">${team.members.length
-          ? team.members.map((member) => `<span>${escapeHtml(member.name)} <button class="mini danger remove-member" data-team="${team.id}" data-user="${member.id}" title="移除成员">×</button></span>`).join('')
-          : '<span class="muted">空队伍</span>'}
-        </div>
-      </td>
-      <td class="actions">
-        <button class="secondary edit-team" data-id="${team.id}">修改</button>
-        <button class="secondary add-team-member" data-id="${team.id}" ${team.isFull ? 'disabled' : ''}>加入成员</button>
-        <button class="secondary set-captain" data-id="${team.id}">${team.captain ? '更换队长' : '指定队长'}</button>
-        ${team.captain ? `<button class="secondary clear-captain" data-id="${team.id}">取消队长</button>` : ''}
-        <button class="danger dissolve-team" data-id="${team.id}">解散</button>
-      </td>
-    </tr>`).join('');
-  const taskStatusNames = { draft: '草稿', published: '发布', closed: '关闭', archived: '归档' };
-  const submissionStatusNames = { draft: '草稿', submitted: '已提交', returned: '退回', approved: '通过' };
-  const taskRows = taskAdminResult.tasks.map((task) => {
-    const submissions = taskAdminResult.submissions.filter((item) => item.taskId === task.id);
-    return `<tr><td>${escapeHtml(task.name)}</td><td>${escapeHtml(trackName(task.trackId))}</td><td>${taskStatusNames[task.status]}</td><td>${formatDate(task.startAt)}<br>${formatDate(task.endAt)}</td><td>${submissions.length}</td><td><button class="secondary edit-task" data-id="${task.id}">编辑</button></td></tr>`;
-  }).join('');
-  const submissionRows = taskAdminResult.submissions.map((item) => {
-    const task = taskAdminResult.tasks.find((entry) => entry.id === item.taskId);
-    return `<tr><td>${escapeHtml(task?.name || '已归档任务')}</td><td>${item.ownerType === 'team' ? '队伍' : '个人'} ${escapeHtml(item.ownerId)}</td><td>${submissionStatusNames[item.status] || item.status}</td><td>${item.images.map((url) => `<a href="${escapeHtml(url)}" target="_blank">图片</a>`).join(' ')}</td><td>${escapeHtml(item.copy)}</td><td>${item.status === 'submitted' ? `<button class="approve-submission" data-id="${item.id}">通过</button><button class="danger return-submission" data-id="${item.id}">退回</button>` : ''}<button class="danger delete-submission" data-id="${item.id}">删除</button></td></tr>`;
-  }).join('');
-  const plazaRows = plazaAdminResult.posts.map((post) => `<tr>
-    <td>${escapeHtml(post.teamName)}</td><td>${escapeHtml(post.taskName)}</td><td>${post.members.map((member) => escapeHtml(member.name)).join('、')}</td>
-    <td>${post.status === 'visible' ? '公开' : '已隐藏'}</td><td>${post.viewCount}</td><td>${post.likeCount}</td>
-    <td><button class="secondary toggle-post" data-id="${post.id}" data-status="${post.status === 'visible' ? 'hidden' : 'visible'}">${post.status === 'visible' ? '隐藏' : '恢复'}</button><button class="secondary exclude-post" data-id="${post.id}" data-excluded="${!post.excludedFromRanking}">${post.excludedFromRanking ? '恢复排名' : '排除排名'}</button><button class="danger delete-post" data-id="${post.id}">删除</button></td>
-  </tr>`).join('');
-  const materialTaskRows = materialAdmin.tasks.map((task) => {
-    const submissions = materialAdmin.submissions.filter((item) => item.taskId === task.id);
-    const progress = materialAdmin.campusProgress?.find((item) => item.taskId === task.id)?.campuses || [];
-    return `<tr><td>${escapeHtml(task.title)}</td><td>个人</td><td>${formatDate(task.deadline)}</td><td>${task.fileTypes.map((type) => `.${escapeHtml(type)}`).join('、')}</td><td>${submissions.length}</td><td>${progress.map((item) => `${escapeHtml(item.campus)} ${item.completed}/${item.total}`).join('<br>')}</td><td><button class="secondary missing-material" data-id="${task.id}">导出未提交名单</button></td></tr>`;
-  }).join('');
-  const materialSubmissionRows = materialAdmin.submissions.map((item) => {
-    const task = materialAdmin.tasks.find((entry) => entry.id === item.taskId);
-    return `<tr><td>${escapeHtml(task?.title || '已删除任务')}</td><td>${escapeHtml(item.owner?.campus || '未设置')}</td><td>${escapeHtml(item.owner?.name || item.ownerId)}<br><small>${escapeHtml(item.owner?.studentId || '')}</small></td><td>${item.status === 'returned' ? '已退回' : '已提交'}</td><td>${item.files.map((file) => `<button class="secondary admin-material-download" data-url="${file.downloadUrl}" data-name="${escapeHtml(file.originalName)}">${escapeHtml(file.originalName)}</button>`).join(' ')}</td><td>${escapeHtml(item.summary)}</td><td>${item.status === 'submitted' ? `<button class="danger return-material" data-id="${item.id}">退回修改</button>` : escapeHtml(item.reviewNote || '等待重新提交')}</td></tr>`;
-  }).join('');
-
+  const date = selectedDate || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
+  adminDashboardState.date = date;
   app.innerHTML = `
-    <header class="hero">
-      <div class="row"><div><h1>活动管理后台</h1><div>${escapeHtml(config.activityName)}</div></div><button class="secondary right" id="ranking">排行榜</button><button class="secondary" id="plaza">活动广场</button><button class="secondary" id="commentAdmin">评论管理</button><button class="secondary" id="out">退出</button></div>
-    </header>
-    <section class="metric-grid">
-      ${[['用户数量',overview.userCount],['队伍数量',overview.teamCount],['今日提交',overview.todaySubmissions],['公开帖子',overview.publicPostCount],['点赞数量',overview.likeCount],['浏览数量',overview.viewCount]].map(([label,value]) => `<div class="metric-card"><span>${label}</span><strong>${value}</strong></div>`).join('')}
-    </section>
-    <section class="card">
-      <details>
-        <summary>修改我的管理员密码</summary>
-        <form id="changeAdminPassword" class="inline-form">
-          <input name="currentPassword" type="password" autocomplete="current-password" placeholder="当前密码" required>
-          <input name="newPassword" type="password" autocomplete="new-password" minlength="8" placeholder="新密码（至少8位）" required>
-          <input name="confirmPassword" type="password" autocomplete="new-password" minlength="8" placeholder="再次输入新密码" required>
-          <button>修改密码</button>
-        </form>
-      </details>
-    </section>
-    ${governance.isPrimary ? `<section class="card">
-      <div class="row"><div><h2>管理员账号与操作监督</h2><p class="muted">只有最高管理员可以创建管理员，并查看、驳回其他管理员的补卡和审核操作。</p></div><span class="pill done">最高管理员</span></div>
-      <details>
-        <summary>创建管理员账号</summary>
-        <form id="createAdmin" class="inline-form">
-          <input name="studentId" placeholder="管理员账号" required>
-          <input name="name" placeholder="管理员姓名" required>
-          <input name="campus" placeholder="校区" value="金山学院" required>
-          <input name="password" type="password" minlength="8" placeholder="初始密码（至少8位）" required>
-          <button>创建管理员</button>
-        </form>
-      </details>
-      <h3>管理员列表</h3>
-      <div class="member-list">${governance.admins.map((item) => `<span>${escapeHtml(item.name)} · ${escapeHtml(item.studentId)} · ${item.id === user.id ? '最高管理员' : '管理员'}</span>`).join('')}</div>
-      <h3>其他管理员操作记录</h3>
-      <div class="table-wrap"><table><thead><tr><th>管理员</th><th>操作</th><th>对象</th><th>时间</th><th>状态</th><th>处理</th></tr></thead><tbody>
-        ${governance.logs.map((item) => `<tr><td>${escapeHtml(item.actorName)}<br><small>${escapeHtml(item.actorStudentId)}</small></td><td>${escapeHtml(item.action)}</td><td>${escapeHtml(item.entityType)}</td><td>${formatDate(item.createdAt)}</td><td>${item.reviewStatus === 'rejected' ? '<span class="pill pending">已驳回</span>' : '<span class="pill done">有效</span>'}</td><td>${item.reviewStatus !== 'rejected' && ['makeup','approved','returned'].includes(item.action) ? `<button class="danger reject-admin-action" data-id="${item.id}">驳回操作</button>` : '仅查看'}</td></tr>`).join('') || '<tr><td colspan="6">暂无其他管理员操作</td></tr>'}
-      </tbody></table></div>
-    </section>` : ''}
-    <section class="card admin-user-section">
-      <div class="row completion-heading">
-        <div><h2>每日完成情况</h2><p class="muted">三餐全部提交才计为“食光有约”当日完成；点击姓名查看详情或补卡</p></div>
-        <label class="right">日期 <input id="date" type="date" value="${date}"></label><button class="secondary" id="reload">查询</button>
-      </div>
-      <div class="completion-summary-grid">
-        <button class="completion-summary ${adminCompletionTrack === 'all' ? 'active' : ''}" data-track="all"><span>总完成情况</span><strong>${overallSummary.completed}/${overallSummary.total}</strong></button>
-        <button class="completion-summary ${adminCompletionTrack === 'interaction' ? 'active' : ''}" data-track="interaction"><span>廿载同心</span><strong>${interactionSummary.completed}/${interactionSummary.total}</strong></button>
-        <button class="completion-summary ${adminCompletionTrack === 'health' ? 'active' : ''}" data-track="health"><span>食光有约</span><strong>${healthSummary.completed}/${healthSummary.total}</strong></button>
-      </div>
-      <div class="row completion-list-heading"><strong>${adminCompletionTrack === 'interaction' ? '廿载同心' : adminCompletionTrack === 'health' ? '食光有约' : '全部赛道'}用户</strong><span class="right muted">共 ${userResult.total} 人</span></div>
-      <form id="adminUserSearch" class="user-list-toolbar">
-        <input name="query" value="${escapeHtml(adminUserQuery)}" placeholder="搜索姓名或学号" aria-label="搜索姓名或学号">
-        <button>搜索</button>
-      </form>
-      <div class="user-filter-tabs" role="group" aria-label="完成状态筛选">
-        ${[['all','全部用户'],['completed','已完成'],['missing','未完成']].map(([value,label]) =>
-          `<button class="secondary user-filter ${adminUserFilter === value ? 'active' : ''}" data-filter="${value}">${label}</button>`).join('')}
-      </div>
-      <div class="admin-user-grid">${userTiles || '<p class="muted">没有符合条件的用户</p>'}</div>
-      <div class="user-pagination">
-        <button class="secondary" id="adminUserPrev" ${userResult.page <= 1 ? 'disabled' : ''}>上一页</button>
-        <span>第 ${userResult.page} / ${Math.max(1, Math.ceil(userResult.total / userResult.limit))} 页</span>
-        <button class="secondary" id="adminUserNext" ${userResult.page * userResult.limit >= userResult.total ? 'disabled' : ''}>下一页</button>
-      </div>
-    </section>
-    <section class="card">
-      <div class="row"><h2>活动任务管理</h2><span class="right muted">所有时间由服务端校验</span></div>
-      <form id="switches" class="inline-form">
-        <label><input type="checkbox" name="activityEnabled" ${config.activityEnabled ? 'checked' : ''}> 活动总开关</label>
-        <label><input type="checkbox" name="interaction" ${config.trackEnabled?.interaction ? 'checked' : ''}> 四校区赛道</label>
-        <label><input type="checkbox" name="health" ${config.trackEnabled?.health ? 'checked' : ''}> 自律赛道</label>
-        <button>保存开关</button>
-      </form>
-      <div class="table-wrap"><table><thead><tr><th>任务</th><th>赛道</th><th>状态</th><th>时间</th><th>提交数</th><th>操作</th></tr></thead><tbody>${taskRows || '<tr><td colspan="6">尚无任务</td></tr>'}</tbody></table></div>
-    </section>
-    <section class="card">
-      <h2>任务材料审核</h2>
-      <div class="table-wrap"><table><thead><tr><th>任务</th><th>提交主体</th><th>状态</th><th>图片</th><th>文案</th><th>审核</th></tr></thead><tbody>${submissionRows || '<tr><td colspan="6">尚无材料</td></tr>'}</tbody></table></div>
-    </section>
-    <section class="card">
-      <div class="row"><h2>活动广场管理</h2><span class="right muted">帖子仅由公开任务提交自动生成</span></div>
-      <div class="table-wrap"><table><thead><tr><th>队伍</th><th>任务</th><th>成员</th><th>状态</th><th>浏览</th><th>点赞</th><th>操作</th></tr></thead><tbody>${plazaRows || '<tr><td colspan="7">暂无广场帖子</td></tr>'}</tbody></table></div>
-    </section>
-    <section class="card">
-      <div class="row"><h2>最终截图证明</h2><span class="right muted">最多 8 张 · 压缩后单张不超过 5MB</span></div>
-      <div class="table-wrap"><table><thead><tr><th>任务</th><th>方式</th><th>截止时间</th><th>图片类型</th><th>已提交</th><th>各校区进度</th><th>操作</th></tr></thead><tbody>${materialTaskRows || '<tr><td colspan="7">暂无截图任务</td></tr>'}</tbody></table></div>
-      <h3>材料提交记录</h3>
-      <div class="row"><label>校区筛选 <select id="materialCampus"><option value="">全部校区</option>${(materialAdmin.campuses || []).map((campus) => `<option value="${escapeHtml(campus)}" ${campus === materialAdminCampus ? 'selected' : ''}>${escapeHtml(campus)}</option>`).join('')}</select></label><span class="right">第 ${materialAdmin.pagination?.page || 1}/${materialAdmin.pagination?.pages || 1} 页，共 ${materialAdmin.pagination?.total || 0} 人</span><button class="secondary" id="materialPrev" ${materialAdminPage <= 1 ? 'disabled' : ''}>上一页</button><button class="secondary" id="materialNext" ${materialAdminPage >= (materialAdmin.pagination?.pages || 1) ? 'disabled' : ''}>下一页</button></div>
-      <div class="table-wrap"><table><thead><tr><th>任务</th><th>校区</th><th>学生</th><th>状态</th><th>截图</th><th>总结</th><th>管理</th></tr></thead><tbody>${materialSubmissionRows || '<tr><td colspan="7">暂无截图提交</td></tr>'}</tbody></table></div>
-    </section>
-    <section class="card">
-      <div class="row"><div><h2>Excel 数据导出</h2><p class="muted">学号按文本格式导出，不会变成科学计数法。</p></div><label class="right">缺卡日期 <input id="exportDate" type="date" value="${date}"></label><label>排行榜月份 <input id="exportMonth" type="month" value="${date.slice(0, 7)}"></label></div>
-      <div class="export-buttons">${[['users','用户名单'],['teams','队伍名单'],['checkins','打卡记录'],['missing','缺卡名单'],['rankings','排行榜'],['materials','材料清单']].map(([type,label]) => `<button class="secondary export-data" data-type="${type}">${label}</button>`).join('')}</div>
-    </section>
-    <section class="card">
-      <div class="row">
-        <div><h2>互动赛道队伍</h2><p class="muted">已创建 ${teamResult.teamCount}/${teamResult.maxTeams} 个队伍</p></div>
-        <form id="teamCapacity" class="inline-form right">
-          <button type="button" class="secondary" id="decreaseCapacity">−</button>
-          <input name="maxTeams" type="number" min="${teamResult.teamCount}" max="500" value="${teamResult.maxTeams}" aria-label="最大队伍数量">
-          <button type="button" class="secondary" id="increaseCapacity">＋</button>
-          <button>保存名额</button>
-        </form>
-      </div>
-      <div class="table-wrap"><table><thead><tr><th>队伍</th><th>人数</th><th>成员</th><th>操作</th></tr></thead><tbody>${teamRows || '<tr><td colspan="4">尚未创建队伍</td></tr>'}</tbody></table></div>
-    </section>
-    <section class="grid admin-tools">
-      <div class="card">
-        <h2>创建队伍</h2>
-        <form id="createTeam">
-          <label>队伍名称</label><input name="name" required>
-          <label>人数限制</label><input name="memberLimit" type="number" min="1" max="20" value="4" required>
-          <button ${teamResult.teamCount >= teamResult.maxTeams ? 'disabled' : ''}>创建队伍</button>
-        </form>
-      </div>
-      <div class="card">
-        <h2>Excel 统一导入队伍</h2>
-        <p class="muted">支持每行“队伍名称、成员1学号～成员4学号、队长学号”。队长学号可选，也可导入后在队伍列表中指定。</p>
-        <form id="importTeams">
-          <input name="file" type="file" accept=".xlsx" required>
-          <button>导入并自动编队</button>
-        </form>
-      </div>
-      <div class="card">
-        <h2>创建活动任务</h2>
-        <p class="muted">先选择任务类型，两种设置流程完全分开。</p>
-        <div class="task-type-choices">
-          <button id="createSingleTask" class="task-type-card" type="button"><span>单次任务</span><small>指定一次开始和截止时间</small></button>
-          <button id="createPeriodicTask" class="task-type-card secondary" type="button"><span>周期任务</span><small>按星期和每日时段自动生成</small></button>
+    <header class="hero admin-refactor-hero">
+      <div class="row"><div><h1>活动管理后台</h1><div>${escapeHtml(config.activityName)}</div></div>
+        <div class="admin-header-actions right">
+          <button class="secondary" id="ranking">排行榜</button>
+          <button class="secondary" id="plaza">活动广场</button>
+          <button class="secondary" id="commentAdmin">评论管理</button>
+          <button class="secondary" id="legacyAdminTools">高级工具</button>
+          <button class="secondary" id="out">退出</button>
         </div>
       </div>
-      <div class="card">
-        <h2>创建最终截图证明任务</h2>
-        <form id="createMaterialTask">
-          <label>标题</label><input name="title" required>
-          <label>描述</label><textarea name="description"></textarea>
-          <label>截止时间</label><input name="deadline" type="datetime-local" required>
-          <label>允许图片类型</label><input name="fileTypes" value="jpg, jpeg, png, webp" readonly required>
-          <label>图片数量限制</label><input name="fileLimit" type="number" min="1" max="8" value="8" required>
-          <input name="submissionMode" type="hidden" value="individual">
-          <label><input name="summaryRequired" type="checkbox"> 需要文字总结</label>
-          <button>创建材料任务</button>
-        </form>
+    </header>
+    <main class="admin-refactor-shell">
+      <section class="card admin-user-section" id="adminUserCore" aria-busy="true">
+        <div class="admin-panel-loading">正在加载用户完成情况…</div>
+      </section>
+      <div class="admin-management-stack" aria-label="后台管理模块">
+        ${adminAccordionMarkup('checkin', '打卡设置', '打卡日期、时段、星期与照片数量')}
+        ${adminAccordionMarkup('team', '队伍管理', '队伍列表、手动创建与 Excel 导入')}
+        ${adminAccordionMarkup('user', '用户管理', '单个添加与 Excel 批量导入')}
+        ${adminAccordionMarkup('plaza', '活动广场管理', '紧凑列表，查看详情后再执行管理操作')}
       </div>
-      <div class="card">
-        <h2>添加用户</h2>
-        <form id="addUser">
-          <label>姓名</label><input name="name" required>
-          <label>学号</label><input name="studentId" required>
-          <label>校区</label><input name="campus" required>
-          <label>所属赛道</label><select name="trackId" required>${tracks.map((track) => `<option value="${track.id}">${escapeHtml(track.name)}</option>`).join('')}</select>
-          <label>初始密码</label><input name="password" required>
-          <label>账号状态</label><select name="status"><option value="active">启用</option><option value="disabled">禁用</option></select>
-          <button>创建账号</button>
-        </form>
-      </div>
-      <div class="card">
-        <h2>Excel 导入名单</h2>
-        <p class="muted">第一行必须包含：姓名、学号、校区、所属赛道、初始密码；可选“账号状态”。仅支持 .xlsx。</p>
-        <form id="importUsers">
-          <input name="file" type="file" accept=".xlsx" required>
-          <button>导入名单</button>
-        </form>
-      </div>
-      <div class="card">
-        <h2>打卡时段设置</h2>
-        <form id="settings">
-          <label>活动名称</label><input name="activityName" value="${escapeHtml(config.activityName)}">
-          ${config.slots.map((slot) => `<div class="row"><label class="slot-label">${escapeHtml(slot.label)}</label><input name="${slot.id}Start" type="time" value="${slot.start}"><span>至</span><input name="${slot.id}End" type="time" value="${slot.end}"></div>`).join('')}
-          <button>保存设置</button>
-        </form>
-      </div>
-    </section>
+      <p class="admin-advanced-note">任务设置、最终截图、导出、管理员监督等低频功能已移至“高级工具”，不会参与首页加载。</p>
+    </main>
     <div id="modalRoot"></div>`;
-
-  enhanceAdminSections();
   prepareDynamicContent(app);
   document.querySelector('#out').onclick = logout;
   document.querySelector('#ranking').onclick = () => rankings();
   document.querySelector('#plaza').onclick = () => plaza();
   document.querySelector('#commentAdmin').onclick = () => adminComments();
-  document.querySelector('#changeAdminPassword').onsubmit = async (event) => {
-    event.preventDefault();
-    const values = Object.fromEntries(new FormData(event.target));
-    if (values.newPassword !== values.confirmPassword) {
-      alert('两次输入的新密码不一致');
-      return;
-    }
-    try {
-      await api('/api/admin/password', {
-        method: 'PATCH',
-        body: JSON.stringify({
-          currentPassword: values.currentPassword,
-          newPassword: values.newPassword
-        })
-      });
-      event.target.reset();
-      alert('管理员密码已修改');
-    } catch (error) { alert(error.message); }
-  };
-  if (document.querySelector('#createAdmin')) {
-    document.querySelector('#createAdmin').onsubmit = async (event) => {
-      event.preventDefault();
-      const values = Object.fromEntries(new FormData(event.target));
-      try {
-        await api('/api/admin/admins', { method: 'POST', body: JSON.stringify(values) });
-        alert('管理员账号已创建');
-        admin(date);
-      } catch (error) { alert(error.message); }
-    };
+  document.querySelector('#legacyAdminTools').onclick = () => openLegacyAdminTools(date);
+  document.querySelectorAll('[data-admin-panel-target]').forEach((button) => {
+    button.onclick = () => setCompactAdminPanel(button.dataset.adminPanelTarget);
+  });
+  await refreshCompactAdminUsers(date);
+  if (!isCurrentNavigation(pageEpoch)) return;
+  if (adminDashboardState.openPanel) await setCompactAdminPanel(adminDashboardState.openPanel);
+  requestAnimationFrame(() => window.scrollTo(0, Number(sessionStorage.adminScrollY || 0)));
+}
+
+/* ADMIN_DASHBOARD_REFACTOR_V1 */
+const adminDashboardState = {
+  date: '',
+  users: [],
+  userSummary: null,
+  teamData: null,
+  teamSavedAt: 0,
+  plazaData: null,
+  plazaPage: 1,
+  openPanel: sessionStorage.getItem('adminCompactPanel') || '',
+  teamTab: sessionStorage.getItem('adminTeamTab') || 'manual',
+  userTab: sessionStorage.getItem('adminUserTab') || 'single',
+  userTrack: ['health', 'interaction'].includes(sessionStorage.getItem('adminUserTrack'))
+    ? sessionStorage.getItem('adminUserTrack') : 'health',
+  requestEpoch: 0
+};
+
+const adminCacheFresh = (savedAt, ttl = 20_000) => savedAt && Date.now() - savedAt < ttl;
+
+const adminAccordionMarkup = (name, title, description, count = '') => `
+  <section class="card admin-compact-module" data-admin-module="${name}">
+    <h2 class="admin-accordion-heading">
+      <button type="button" class="admin-accordion-trigger" id="adminTrigger-${name}"
+        aria-expanded="false" aria-controls="adminPanel-${name}" data-admin-panel-target="${name}">
+        <span><strong>${escapeHtml(title)}</strong>${description ? `<small>${escapeHtml(description)}</small>` : ''}</span>
+        <span class="admin-module-meta">${count ? `<b>${escapeHtml(String(count))}</b>` : ''}<i aria-hidden="true">⌄</i></span>
+      </button>
+    </h2>
+    <div class="admin-accordion-panel" id="adminPanel-${name}" role="region"
+      aria-labelledby="adminTrigger-${name}" hidden></div>
+  </section>`;
+
+const setAdminTab = (scope, value) => {
+  const root = document.querySelector(`[data-admin-module="${scope}"]`);
+  if (!root) return;
+  root.querySelectorAll('[data-admin-tab]').forEach((button) => {
+    const active = button.dataset.adminTab === value;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+    button.tabIndex = active ? 0 : -1;
+  });
+  root.querySelectorAll('[data-admin-tab-panel]').forEach((panel) => {
+    panel.hidden = panel.dataset.adminTabPanel !== value;
+  });
+  if (scope === 'team') {
+    adminDashboardState.teamTab = value;
+    sessionStorage.setItem('adminTeamTab', value);
+  } else {
+    adminDashboardState.userTab = value;
+    sessionStorage.setItem('adminUserTab', value);
   }
-  document.querySelectorAll('.reject-admin-action').forEach((button) => {
-    button.onclick = async () => {
-      if (!await askConfirm('是否驳回该管理员操作？', '补卡记录将被撤销；审核结果将恢复为待审核状态。')) return;
-      try {
-        await api(`/api/admin/governance/${button.dataset.id}/reject`, {
-          method: 'POST',
-          body: JSON.stringify({ note: '最高管理员驳回' })
-        });
-        alert('该管理员操作已驳回');
-        admin(date);
-      } catch (error) { alert(error.message); }
-    };
+};
+
+const bindAdminTabs = (scope) => {
+  const root = document.querySelector(`[data-admin-module="${scope}"]`);
+  if (!root) return;
+  root.querySelectorAll('[data-admin-tab]').forEach((button) => {
+    button.onclick = () => setAdminTab(scope, button.dataset.adminTab);
   });
-  document.querySelector('#reload').onclick = () =>
-    admin(document.querySelector('#date').value);
-  document.querySelectorAll('.completion-summary').forEach((button) => {
-    button.onclick = () => {
-      adminCompletionTrack = button.dataset.track;
-      adminUserPage = 1;
-      sessionStorage.adminCompletionTrack = adminCompletionTrack;
-      sessionStorage.adminUserPage = '1';
-      admin(date);
-    };
-  });
+  setAdminTab(scope, scope === 'team' ? adminDashboardState.teamTab : adminDashboardState.userTab);
+};
+
+const renderAdminUserPanel = (completion, result, date) => {
+  const target = document.querySelector('#adminUserCore');
+  if (!target) return;
+  adminDashboardState.users = result.users;
+  adminDashboardState.userSummary = completion;
+  const selectedTrack = adminDashboardState.userTrack;
+  const selectedTrackLabel = selectedTrack === 'health' ? '健康自律赛道' : '四校区赛道';
+  const selectedTrackSummary = completion.tracks?.find((item) => item.trackId === selectedTrack) || {};
+  const completed = Number(selectedTrackSummary.completed || 0);
+  const total = Number(selectedTrackSummary.total || 0);
+  const missing = Math.max(0, total - completed);
+  const tiles = result.users.map((studentUser, index) => `
+    <button class="admin-user-tile ${studentUser.completed ? 'completed' : 'missing'}" data-id="${studentUser.id}">
+      <span class="user-number">${(result.page - 1) * result.limit + index + 1}</span>
+      <span class="admin-user-tile-copy"><strong>${escapeHtml(studentUser.name)}</strong><small>${escapeHtml(studentUser.studentId)} · ${escapeHtml(trackName(studentUser.trackId))}</small></span>
+      <span class="user-completion ${studentUser.completed ? 'done' : 'pending'}" aria-label="${studentUser.completed ? '已完成' : '未完成'}">${studentUser.completed ? '✓' : '—'}</span>
+    </button>`).join('');
+  target.innerHTML = `
+    <div class="admin-user-heading">
+      <div><h2>${selectedTrackLabel}</h2><p class="muted">点击姓名查看当天记录或进行补卡</p></div>
+      <label>日期 <input id="adminCompactDate" type="date" value="${date}"></label>
+    </div>
+    <div class="admin-user-overview" aria-label="用户完成概览">
+      <span><small>总人数</small><strong>${total}</strong></span>
+      <span class="done"><small>已完成</small><strong>${completed}</strong></span>
+      <span class="pending"><small>未完成</small><strong>${missing}</strong></span>
+    </div>
+    <form id="adminUserSearch" class="user-list-toolbar">
+      <input name="query" value="${escapeHtml(adminUserQuery)}" placeholder="搜索姓名或学号" aria-label="搜索姓名或学号">
+      <button>搜索</button>
+    </form>
+    <div class="user-track-tabs" role="tablist" aria-label="用户赛道筛选">
+      <button type="button" role="tab" class="secondary track-filter ${selectedTrack === 'health' ? 'active' : ''}" data-track-filter="health" aria-selected="${selectedTrack === 'health'}">健康自律赛道</button>
+      <button type="button" role="tab" class="secondary track-filter ${selectedTrack === 'interaction' ? 'active' : ''}" data-track-filter="interaction" aria-selected="${selectedTrack === 'interaction'}">四校区赛道</button>
+    </div>
+    <div class="user-filter-tabs" role="group" aria-label="完成状态筛选">
+      ${[['all','全部用户'],['completed','已完成'],['missing','未完成']].map(([value,label]) =>
+        `<button type="button" class="secondary user-filter ${adminUserFilter === value ? 'active' : ''}" data-filter="${value}">${label}</button>`).join('')}
+    </div>
+    <div class="admin-user-grid">${tiles || '<p class="muted">没有符合条件的用户</p>'}</div>
+    <div class="user-pagination">
+      <button class="secondary" id="adminUserPrev" ${result.page <= 1 ? 'disabled' : ''}>上一页</button>
+      <span>第 ${result.page} / ${Math.max(1, Math.ceil(result.total / result.limit))} 页</span>
+      <button class="secondary" id="adminUserNext" ${result.page * result.limit >= result.total ? 'disabled' : ''}>下一页</button>
+    </div>`;
+  target.setAttribute('aria-busy', 'false');
+
+  document.querySelector('#adminCompactDate').onchange = (event) => {
+    adminUserPage = 1;
+    sessionStorage.adminUserPage = '1';
+    adminDashboardState.date = event.target.value;
+    refreshCompactAdminUsers(event.target.value);
+  };
   document.querySelector('#adminUserSearch').onsubmit = (event) => {
     event.preventDefault();
     adminUserQuery = new FormData(event.target).get('query').trim();
     adminUserPage = 1;
     sessionStorage.adminUserQuery = adminUserQuery;
     sessionStorage.adminUserPage = '1';
-    admin(date);
+    refreshCompactAdminUsers(date);
   };
+  document.querySelectorAll('.track-filter').forEach((button) => {
+    button.onclick = () => {
+      adminDashboardState.userTrack = button.dataset.trackFilter;
+      sessionStorage.setItem('adminUserTrack', adminDashboardState.userTrack);
+      adminUserPage = 1;
+      sessionStorage.adminUserPage = '1';
+      refreshCompactAdminUsers(date);
+    };
+  });
   document.querySelectorAll('.user-filter').forEach((button) => {
     button.onclick = () => {
       adminUserFilter = button.dataset.filter;
       adminUserPage = 1;
       sessionStorage.adminUserFilter = adminUserFilter;
       sessionStorage.adminUserPage = '1';
-      admin(date);
+      refreshCompactAdminUsers(date);
     };
   });
   document.querySelector('#adminUserPrev').onclick = () => {
     adminUserPage = Math.max(1, adminUserPage - 1);
     sessionStorage.adminUserPage = String(adminUserPage);
-    admin(date);
+    refreshCompactAdminUsers(date);
   };
   document.querySelector('#adminUserNext').onclick = () => {
     adminUserPage += 1;
     sessionStorage.adminUserPage = String(adminUserPage);
-    admin(date);
+    refreshCompactAdminUsers(date);
   };
   document.querySelectorAll('.admin-user-tile').forEach((button) => {
-    button.onclick = () => openAdminUserDrawer(
-      users.find((item) => item.id === button.dataset.id),
-      teamResult.teams,
-      date,
-      taskAdminResult.tasks
-    );
+    button.onclick = () => {
+      const studentUser = adminDashboardState.users.find((item) => item.id === button.dataset.id);
+      if (!studentUser) return;
+      startPhotoFlow('admin-checkin');
+      openAdminUserDrawer(studentUser, date);
+    };
   });
-  document.querySelector('#materialCampus').onchange = (event) => {
-    materialAdminCampus = event.target.value;
-    materialAdminPage = 1;
-    admin(date);
-  };
-  document.querySelector('#materialPrev').onclick = () => { materialAdminPage = Math.max(1, materialAdminPage - 1); admin(date); };
-  document.querySelector('#materialNext').onclick = () => { materialAdminPage += 1; admin(date); };
-  const capacityForm = document.querySelector('#teamCapacity');
-  const capacityInput = capacityForm.maxTeams;
-  document.querySelector('#decreaseCapacity').onclick = () => {
-    capacityInput.value = Math.max(teamResult.teamCount, Number(capacityInput.value) - 1);
-  };
-  document.querySelector('#increaseCapacity').onclick = () => {
-    capacityInput.value = Math.min(500, Number(capacityInput.value) + 1);
-  };
-  capacityForm.onsubmit = async (event) => {
+};
+
+async function refreshCompactAdminUsers(date = adminDashboardState.date) {
+  const target = document.querySelector('#adminUserCore');
+  if (!target) return;
+  target.setAttribute('aria-busy', 'true');
+  const epoch = ++adminDashboardState.requestEpoch;
+  try {
+    const [completion, result] = await Promise.all([
+      api(`/api/admin/completion-summary?date=${date}`),
+      api(`/api/admin/users?page=${adminUserPage}&limit=30&q=${encodeURIComponent(adminUserQuery)}&completion=${adminUserFilter}&track=${adminDashboardState.userTrack}&date=${date}`)
+    ]);
+    if (epoch !== adminDashboardState.requestEpoch || !document.querySelector('#adminUserCore')) return;
+    renderAdminUserPanel(completion, result, date);
+  } catch (error) {
+    target.innerHTML = `<div class="admin-inline-error"><p>${escapeHtml(error.message)}</p><button id="retryAdminUsers">重新加载</button></div>`;
+    document.querySelector('#retryAdminUsers').onclick = () => refreshCompactAdminUsers(date);
+  }
+}
+
+async function loadCompactAdminTeams(force = false) {
+  if (!force && adminDashboardState.teamData && adminCacheFresh(adminDashboardState.teamSavedAt)) {
+    return adminDashboardState.teamData;
+  }
+  const data = await api('/api/admin/teams');
+  adminDashboardState.teamData = data;
+  adminDashboardState.teamSavedAt = Date.now();
+  return data;
+}
+
+const compactTeamRow = (team) => `
+  <article class="admin-compact-row" data-team-row="${team.id}">
+    <div class="admin-compact-primary"><strong>${escapeHtml(team.name)}</strong><small>${team.memberCount}/${team.memberLimit} 人 · 邀请码 ${escapeHtml(team.inviteCode)}</small></div>
+    <div class="admin-compact-secondary"><span>${team.captain ? `队长：${escapeHtml(team.captain.name)}` : '未指定队长'}</span><small>${team.members.map((member) => escapeHtml(member.name)).join('、') || '暂无成员'}</small></div>
+    <div class="admin-compact-actions">
+      <button type="button" class="secondary edit-team" data-id="${team.id}">修改</button>
+      <button type="button" class="secondary add-team-member" data-id="${team.id}" ${team.isFull ? 'disabled' : ''}>加成员</button>
+      <button type="button" class="secondary set-captain" data-id="${team.id}">${team.captain ? '换队长' : '设队长'}</button>
+      ${team.captain ? `<button type="button" class="secondary clear-captain" data-id="${team.id}">取消队长</button>` : ''}
+      <button type="button" class="danger dissolve-team" data-id="${team.id}">解散</button>
+    </div>
+  </article>`;
+
+async function refreshCompactTeamPanel(force = true) {
+  const panel = document.querySelector('#adminPanel-team');
+  if (!panel || panel.hidden) return;
+  panel.innerHTML = '<div class="admin-panel-loading" aria-live="polite">正在加载队伍…</div>';
+  try {
+    const result = await loadCompactAdminTeams(force);
+    panel.innerHTML = `
+      <div class="admin-tabs" role="tablist" aria-label="队伍新增方式">
+        <button type="button" role="tab" data-admin-tab="manual">手动创建</button>
+        <button type="button" role="tab" data-admin-tab="import">Excel 导入</button>
+      </div>
+      <div class="admin-tab-panel" role="tabpanel" data-admin-tab-panel="manual">
+        <form id="compactCreateTeam" class="admin-compact-form">
+          <label>队伍名称<input name="name" required></label>
+          <label>人数限制<input name="memberLimit" type="number" min="1" max="20" value="4" required></label>
+          <button ${result.teamCount >= result.maxTeams ? 'disabled' : ''}>创建队伍</button>
+        </form>
+      </div>
+      <div class="admin-tab-panel" role="tabpanel" data-admin-tab-panel="import" hidden>
+        <form id="compactImportTeams" class="admin-compact-form">
+          <p class="muted">Excel 每行填写队伍名称、成员学号和可选的队长学号。</p>
+          <input name="file" type="file" accept=".xlsx" required>
+          <button>导入并自动编队</button>
+        </form>
+      </div>
+      <div class="admin-team-capacity">
+        <span>已创建 <strong>${result.teamCount}</strong> / ${result.maxTeams} 个队伍</span>
+        <form id="compactTeamCapacity" class="inline-form">
+          <input name="maxTeams" type="number" min="${result.teamCount}" max="500" value="${result.maxTeams}" aria-label="最大队伍数量">
+          <button class="secondary">保存名额</button>
+        </form>
+      </div>
+      <div class="admin-compact-list">${result.teams.map(compactTeamRow).join('') || '<p class="muted">尚未创建队伍</p>'}</div>`;
+    bindAdminTabs('team');
+    document.querySelector('#compactCreateTeam').onsubmit = async (event) => {
+      event.preventDefault();
+      const restore = beginButtonLoading(event.submitter, '创建中…');
+      try {
+        await api('/api/admin/teams', { method: 'POST', body: JSON.stringify(Object.fromEntries(new FormData(event.target))) });
+        event.target.reset();
+        showToast('队伍创建成功');
+        await refreshCompactTeamPanel(true);
+      } catch (error) { restore(); alert(error.message); }
+    };
+    document.querySelector('#compactImportTeams').onsubmit = async (event) => {
+      event.preventDefault();
+      const restore = beginButtonLoading(event.submitter, '导入中…');
+      try {
+        const encoded = await readRawFile(event.target.file.files[0]);
+        const imported = await api('/api/admin/teams/import', { method: 'POST', body: JSON.stringify({ file: encoded }) });
+        showToast(`已导入 ${imported.importedTeams} 个队伍、${imported.importedMembers} 名成员`);
+        await refreshCompactTeamPanel(true);
+      } catch (error) { restore(); alert(error.message); }
+    };
+    document.querySelector('#compactTeamCapacity').onsubmit = async (event) => {
+      event.preventDefault();
+      const restore = beginButtonLoading(event.submitter, '保存中…');
+      try {
+        await api('/api/admin/team-capacity', { method: 'PATCH', body: JSON.stringify({ maxTeams: Number(event.target.maxTeams.value) }) });
+        showToast('队伍名额已更新');
+        await refreshCompactTeamPanel(true);
+      } catch (error) { restore(); alert(error.message); }
+    };
+    document.querySelectorAll('.edit-team').forEach((button) => {
+      button.onclick = () => {
+        adminDashboardState.openPanel = 'team';
+        sessionStorage.setItem('adminCompactPanel', 'team');
+        editTeam(result.teams.find((team) => team.id === button.dataset.id), adminDashboardState.date);
+      };
+    });
+    document.querySelectorAll('.add-team-member').forEach((button) => {
+      button.onclick = async () => {
+        const studentId = await askText('加入队伍成员', '请输入要加入该队伍的学生学号。', '学生学号');
+        if (!studentId) return;
+        try {
+          await api(`/api/admin/teams/${button.dataset.id}/members`, { method: 'POST', body: JSON.stringify({ studentId }) });
+          await refreshCompactTeamPanel(true);
+        } catch (error) { alert(error.message); }
+      };
+    });
+    document.querySelectorAll('.set-captain').forEach((button) => {
+      button.onclick = async () => {
+        const studentId = await askText('指定队长', '该学生必须已经在当前队伍中。', '队长学号');
+        if (!studentId) return;
+        try {
+          await api(`/api/admin/teams/${button.dataset.id}/captain`, { method: 'PATCH', body: JSON.stringify({ studentId }) });
+          await refreshCompactTeamPanel(true);
+        } catch (error) { alert(error.message); }
+      };
+    });
+    document.querySelectorAll('.clear-captain').forEach((button) => {
+      button.onclick = async () => {
+        if (!await askConfirm('是否取消队长？', '取消后，该队伍将暂时没有队长。')) return;
+        try {
+          await api(`/api/admin/teams/${button.dataset.id}/captain`, { method: 'PATCH', body: '{}' });
+          await refreshCompactTeamPanel(true);
+        } catch (error) { alert(error.message); }
+      };
+    });
+    document.querySelectorAll('.dissolve-team').forEach((button) => {
+      button.onclick = async () => {
+        if (!await askConfirm('是否解散该队伍？', '确认后将解除全部成员关系，此操作不可恢复。')) return;
+        try {
+          await api(`/api/admin/teams/${button.dataset.id}`, { method: 'DELETE' });
+          showToast('队伍已解散');
+          await refreshCompactTeamPanel(true);
+        } catch (error) { alert(error.message); }
+      };
+    });
+  } catch (error) {
+    panel.innerHTML = `<div class="admin-inline-error"><p>${escapeHtml(error.message)}</p><button id="retryAdminTeams">重新加载</button></div>`;
+    document.querySelector('#retryAdminTeams').onclick = () => refreshCompactTeamPanel(true);
+  }
+}
+
+function renderCompactUserManagement() {
+  const panel = document.querySelector('#adminPanel-user');
+  if (!panel || panel.dataset.rendered) return;
+  panel.dataset.rendered = 'true';
+  panel.innerHTML = `
+    <div class="admin-tabs" role="tablist" aria-label="用户新增方式">
+      <button type="button" role="tab" data-admin-tab="single">单个添加</button>
+      <button type="button" role="tab" data-admin-tab="import">Excel 批量导入</button>
+    </div>
+    <div class="admin-tab-panel" role="tabpanel" data-admin-tab-panel="single">
+      <form id="compactAddUser" class="admin-compact-form">
+        <label>姓名<input name="name" required></label>
+        <label>学号<input name="studentId" required></label>
+        <label>校区<input name="campus" required></label>
+        <label>所属赛道<select name="trackId" required>${tracks.map((track) => `<option value="${track.id}">${escapeHtml(track.name)}</option>`).join('')}</select></label>
+        <label>初始密码<input name="password" minlength="8" required></label>
+        <label>账号状态<select name="status"><option value="active">启用</option><option value="disabled">禁用</option></select></label>
+        <button>创建账号</button>
+      </form>
+    </div>
+    <div class="admin-tab-panel" role="tabpanel" data-admin-tab-panel="import" hidden>
+      <form id="compactImportUsers" class="admin-compact-form">
+        <p class="muted">首行包含姓名、学号、校区、所属赛道、初始密码，可选账号状态。</p>
+        <input name="file" type="file" accept=".xlsx" required>
+        <button>导入名单</button>
+      </form>
+    </div>`;
+  bindAdminTabs('user');
+  document.querySelector('#compactAddUser').onsubmit = async (event) => {
     event.preventDefault();
+    const restore = beginButtonLoading(event.submitter, '创建中…');
     try {
-      await api('/api/admin/team-capacity', {
-        method: 'PATCH',
-        body: JSON.stringify({ maxTeams: Number(capacityInput.value) })
-      });
-      alert('队伍名额已更新');
-      admin(date);
-    } catch (error) {
-      alert(error.message);
-    }
+      await api('/api/admin/users', { method: 'POST', body: JSON.stringify(Object.fromEntries(new FormData(event.target))) });
+      event.target.reset();
+      showToast('账号创建成功');
+      await refreshCompactAdminUsers(adminDashboardState.date);
+    } catch (error) { restore(); alert(error.message); }
   };
-  document.querySelector('#createTeam').onsubmit = async (event) => {
+  document.querySelector('#compactImportUsers').onsubmit = async (event) => {
     event.preventDefault();
-    try {
-      await api('/api/admin/teams', {
-        method: 'POST',
-        body: JSON.stringify(Object.fromEntries(new FormData(event.target)))
-      });
-      alert('队伍创建成功');
-      admin(date);
-    } catch (error) {
-      alert(error.message);
-    }
-  };
-  document.querySelector('#importTeams').onsubmit = async (event) => {
-    event.preventDefault();
-    try {
-      const encoded = await readRawFile(event.target.file.files[0]);
-      const result = await api('/api/admin/teams/import', { method: 'POST', body: JSON.stringify({ file: encoded }) });
-      alert(`成功导入 ${result.importedTeams} 个队伍、${result.importedMembers} 名成员`);
-      admin(date);
-    } catch (error) { alert(error.message); }
-  };
-  document.querySelector('#addUser').onsubmit = async (event) => {
-    event.preventDefault();
-    try {
-      await api('/api/admin/users', {
-        method: 'POST',
-        body: JSON.stringify(Object.fromEntries(new FormData(event.target)))
-      });
-      alert('账号创建成功');
-      admin(date);
-    } catch (error) {
-      alert(error.message);
-    }
-  };
-  document.querySelector('#importUsers').onsubmit = async (event) => {
-    event.preventDefault();
+    const restore = beginButtonLoading(event.submitter, '导入中…');
     try {
       const file = event.target.file.files[0];
       const encoded = await readRawFile(file);
-      const result = await api('/api/admin/users/import', {
-        method: 'POST',
-        body: JSON.stringify({ file: encoded })
-      });
-      alert(`成功导入 ${result.imported} 个用户`);
-      admin(date);
-    } catch (error) {
-      alert(error.message);
-    }
+      const imported = await api('/api/admin/users/import', { method: 'POST', body: JSON.stringify({ file: encoded }) });
+      showToast(`成功导入 ${imported.imported} 个用户`);
+      await refreshCompactAdminUsers(adminDashboardState.date);
+    } catch (error) { restore(); alert(error.message); }
   };
-  document.querySelector('#settings').onsubmit = async (event) => {
-    event.preventDefault();
-    const form = new FormData(event.target);
-    const slots = config.slots.map((slot) => ({
-      ...slot,
-      start: form.get(`${slot.id}Start`),
-      end: form.get(`${slot.id}End`)
-    }));
+}
+
+const compactPostRow = (post, index) => `
+  <article class="admin-compact-row admin-post-row" data-post-row="${post.id}">
+    <div class="admin-compact-primary"><strong>${escapeHtml(post.teamName)}</strong><small>${escapeHtml(post.taskName)}</small></div>
+    <div class="admin-post-status"><span class="pill ${post.status === 'visible' ? 'done' : 'pending'}">${post.status === 'visible' ? '公开' : '已隐藏'}</span>${post.excludedFromRanking ? '<span class="pill pending">已排除排名</span>' : ''}</div>
+    <button type="button" class="secondary admin-post-actions" data-id="${post.id}">操作</button>
+  </article>`;
+
+function openCompactPostActions(post) {
+  const existing = document.querySelector('#adminPostActionSheet');
+  existing?.remove();
+  const root = document.createElement('div');
+  root.id = 'adminPostActionSheet';
+  root.className = 'app-dialog-backdrop admin-action-backdrop';
+  root.innerHTML = `<section class="app-dialog admin-action-sheet" role="dialog" aria-modal="true" aria-labelledby="adminPostActionTitle">
+    <div class="row"><div><small class="muted">广场帖子</small><h2 id="adminPostActionTitle">${escapeHtml(post.teamName)}</h2></div><button type="button" class="secondary right" data-close-post-actions>关闭</button></div>
+    <dl class="admin-post-details">
+      <div><dt>队伍</dt><dd>${escapeHtml(post.teamName)}</dd></div>
+      <div><dt>任务</dt><dd>${escapeHtml(post.taskName)}</dd></div>
+      <div><dt>状态</dt><dd>${post.status === 'visible' ? '公开' : '已隐藏'}</dd></div>
+      <div><dt>浏览 / 点赞</dt><dd>${post.viewCount} / ${post.likeCount}</dd></div>
+      <div><dt>发布时间</dt><dd>${formatDate(post.publishedAt)}</dd></div>
+      <div class="wide"><dt>文案</dt><dd>${escapeHtml(post.copy || '无文案')}</dd></div>
+    </dl>
+    <div class="admin-post-photo-grid">${(post.images || []).map((image, imageIndex) => `<button type="button" class="image-viewer-trigger admin-post-photo" data-image-viewer="${escapeHtml(image.thumbUrl || image.imageUrl)}" data-image-thumb="${escapeHtml(image.thumbUrl || image.imageUrl)}" data-image-display="${escapeHtml(image.displayUrl || image.imageUrl)}" data-image-alt="${escapeHtml(post.teamName)}活动原图"><span class="image-shell"><img data-perf-image="admin-plaza-thumb" data-priority="${imageIndex === 0 ? 'high' : 'low'}" ${imageIndex === 0 ? 'src' : 'data-src'}="${escapeHtml(image.thumbUrl || image.imageUrl)}" loading="${imageIndex === 0 ? 'eager' : 'lazy'}" fetchpriority="${imageIndex === 0 ? 'high' : 'low'}" decoding="async" width="960" height="720" alt="活动照片" onload="this.parentElement.classList.add('loaded')" onerror="this.hidden=true;this.parentElement.classList.add('failed')"><span class="image-error">图片加载失败</span></span></button>`).join('') || '<p class="muted">该帖子暂无照片</p>'}</div>
+    <div class="admin-action-buttons">
+      <button type="button" class="secondary" data-post-toggle>${post.status === 'visible' ? '隐藏帖子' : '恢复公开'}</button>
+      <button type="button" class="secondary" data-post-exclude>${post.excludedFromRanking ? '恢复排名' : '排除排名'}</button>
+      <button type="button" class="danger" data-post-delete>删除帖子</button>
+    </div>
+  </section>`;
+  document.body.append(root);
+  prepareDynamicContent(root);
+  const close = () => root.remove();
+  root.querySelector('[data-close-post-actions]').onclick = close;
+  root.onclick = (event) => { if (event.target === root) close(); };
+  root.querySelector('[data-post-toggle]').onclick = async (event) => {
+    const restore = beginButtonLoading(event.currentTarget, '处理中…');
     try {
-      await api('/api/admin/config', {
-        method: 'PUT',
-        body: JSON.stringify({ activityName: form.get('activityName'), slots })
-      });
-      alert('设置已保存');
-      home();
-    } catch (error) {
-      alert(error.message);
-    }
+      await api(`/api/admin/plaza/${post.id}`, { method: 'PATCH', body: JSON.stringify({ status: post.status === 'visible' ? 'hidden' : 'visible' }) });
+      plazaViewCache.clear();
+      rankingViewCache.clear();
+      close();
+      await refreshCompactPlazaPanel(adminDashboardState.plazaPage);
+      showToast('帖子状态已更新');
+    } catch (error) { restore(); alert(error.message); }
   };
-  document.querySelectorAll('.edit-user').forEach((button) => {
-    button.onclick = () => editUser(users.find((item) => item.id === button.dataset.id), date);
-  });
-  document.querySelectorAll('.edit-team').forEach((button) => {
-    button.onclick = () =>
-      editTeam(teamResult.teams.find((team) => team.id === button.dataset.id), date);
-  });
-  document.querySelectorAll('.remove-member').forEach((button) => {
-    button.onclick = async () => {
-      if (!await askConfirm(
-        '是否将该成员踢出队伍？',
-        '踢出后，该成员将退出当前队伍。',
-        { cancelText: '取消踢出队伍', confirmText: '确定踢出队伍' }
-      )) return;
-      try {
-        await api(`/api/admin/teams/${button.dataset.team}/members/${button.dataset.user}`, {
-          method: 'DELETE'
-        });
-        admin(date);
-      } catch (error) {
-        alert(error.message);
-      }
-    };
-  });
-  document.querySelectorAll('.add-team-member').forEach((button) => {
-    button.onclick = async () => {
-      const studentId = await askText('加入队伍成员', '请输入要加入该队伍的学生学号。', '学生学号');
-      if (!studentId) return;
-      try {
-        await api(`/api/admin/teams/${button.dataset.id}/members`, { method: 'POST', body: JSON.stringify({ studentId }) });
-        admin(date);
-      } catch (error) { alert(error.message); }
-    };
-  });
-  document.querySelectorAll('.set-captain').forEach((button) => {
-    button.onclick = async () => {
-      const studentId = await askText('指定队长', '该学生必须已经在当前队伍中。', '队长学号');
-      if (!studentId) return;
-      try {
-        await api(`/api/admin/teams/${button.dataset.id}/captain`, { method: 'PATCH', body: JSON.stringify({ studentId }) });
-        admin(date);
-      } catch (error) { alert(error.message); }
-    };
-  });
-  document.querySelectorAll('.clear-captain').forEach((button) => {
-    button.onclick = async () => {
-      if (!await askConfirm('是否取消队长？', '取消后，该队伍将暂时没有队长。')) return;
-      try {
-        await api(`/api/admin/teams/${button.dataset.id}/captain`, { method: 'PATCH', body: '{}' });
-        admin(date);
-      } catch (error) { alert(error.message); }
-    };
-  });
-  document.querySelectorAll('.dissolve-team').forEach((button) => {
-    button.onclick = async () => {
-      if (!await askConfirm(
-        '是否解散该队伍？',
-        '确认后将解除全部成员关系并解散队伍，此操作不可恢复。',
-        { cancelText: '取消解散', confirmText: '确定解散' }
-      )) return;
-      try {
-        await api(`/api/admin/teams/${button.dataset.id}`, { method: 'DELETE' });
-        await admin(date);
-        alert('队伍已解散');
-      } catch (error) {
-        alert(`解散失败：${error.message}`);
-      }
-    };
-  });
-  document.querySelectorAll('.toggle-user').forEach((button) => {
-    button.onclick = async () => {
-      const action = button.dataset.status === 'disabled' ? '禁用' : '启用';
-      if (!await askConfirm(`是否${action}该用户？`, `${action}后将立即影响该账号的登录状态。`)) return;
-      try {
-        await api(`/api/admin/users/${button.dataset.id}/status`, {
-          method: 'PATCH',
-          body: JSON.stringify({ status: button.dataset.status })
-        });
-        admin(date);
-      } catch (error) {
-        alert(error.message);
-      }
-    };
-  });
-  document.querySelector('#switches').onsubmit = async (event) => {
-    event.preventDefault();
-    const form = event.target;
-    await api('/api/admin/activity-switches', { method: 'PATCH', body: JSON.stringify({ activityEnabled: form.activityEnabled.checked, trackEnabled: { interaction: form.interaction.checked, health: form.health.checked } }) });
-    home();
-  };
-  document.querySelector('#createSingleTask').onclick = () => openTaskCreator('single', date);
-  document.querySelector('#createPeriodicTask').onclick = () => openTaskCreator('periodic', date);
-  document.querySelector('#createMaterialTask').onsubmit = async (event) => {
-    event.preventDefault();
-    const values = Object.fromEntries(new FormData(event.target));
+  root.querySelector('[data-post-exclude]').onclick = async (event) => {
+    const restore = beginButtonLoading(event.currentTarget, '处理中…');
     try {
-      await api('/api/admin/material-tasks', { method: 'POST', body: JSON.stringify({ ...values, fileLimit: Number(values.fileLimit), summaryRequired: event.target.summaryRequired.checked }) });
-      alert('材料任务创建成功');
-      admin(date);
-    } catch (error) { alert(error.message); }
+      await api(`/api/admin/plaza/${post.id}`, { method: 'PATCH', body: JSON.stringify({ excludedFromRanking: !post.excludedFromRanking }) });
+      rankingViewCache.clear();
+      close();
+      await refreshCompactPlazaPanel(adminDashboardState.plazaPage);
+      showToast('排名状态已更新');
+    } catch (error) { restore(); alert(error.message); }
   };
-  document.querySelectorAll('.edit-task').forEach((button) => {
-    button.onclick = () => editTask(taskAdminResult.tasks.find((task) => task.id === button.dataset.id), date);
-  });
-  document.querySelectorAll('.approve-submission,.return-submission').forEach((button) => {
-    button.onclick = async () => {
-      const returning = button.classList.contains('return-submission');
-      const reviewNote = returning ? await askText('退回任务提交', '请填写退回原因。', '退回原因') : '';
-      if (returning && !reviewNote) return;
+  root.querySelector('[data-post-delete]').onclick = async (event) => {
+    if (!await askConfirm('是否永久删除该广场帖子？', '任务提交记录不会删除，此操作不可恢复。')) return;
+    const restore = beginButtonLoading(event.currentTarget, '删除中…');
+    try {
+      await api(`/api/admin/plaza/${post.id}`, { method: 'DELETE' });
+      plazaViewCache.clear();
+      rankingViewCache.clear();
+      close();
+      await refreshCompactPlazaPanel(adminDashboardState.plazaPage);
+      showToast('帖子已删除');
+    } catch (error) { restore(); alert(error.message); }
+  };
+}
+
+async function refreshCompactPlazaPanel(page = 1) {
+  const panel = document.querySelector('#adminPanel-plaza');
+  if (!panel || panel.hidden) return;
+  panel.innerHTML = '<div class="admin-panel-loading" aria-live="polite">正在加载广场帖子…</div>';
+  try {
+    const result = await api(`/api/admin/plaza?page=${page}&limit=20`);
+    adminDashboardState.plazaData = result;
+    adminDashboardState.plazaPage = result.page;
+    panel.innerHTML = `
+      <div class="admin-panel-summary"><span>共 ${result.total} 条帖子</span><small class="muted">详情与管理操作按需打开</small></div>
+      <div class="admin-user-grid admin-post-grid">${result.posts.map((post, index) => compactPostRow(post, index)).join('') || '<p class="muted">暂无广场帖子</p>'}</div>
+      <div class="user-pagination">
+        <button type="button" class="secondary" id="compactPlazaPrev" ${result.page <= 1 ? 'disabled' : ''}>上一页</button>
+        <span>第 ${result.page} 页</span>
+        <button type="button" class="secondary" id="compactPlazaNext" ${!result.hasMore ? 'disabled' : ''}>下一页</button>
+      </div>`;
+    document.querySelectorAll('.admin-post-actions').forEach((button) => {
+      button.onclick = () => openCompactPostActions(result.posts.find((post) => post.id === button.dataset.id));
+    });
+    document.querySelector('#compactPlazaPrev').onclick = () => refreshCompactPlazaPanel(Math.max(1, result.page - 1));
+    document.querySelector('#compactPlazaNext').onclick = () => refreshCompactPlazaPanel(result.page + 1);
+  } catch (error) {
+    panel.innerHTML = `<div class="admin-inline-error"><p>${escapeHtml(error.message)}</p><button id="retryAdminPlaza">重新加载</button></div>`;
+    document.querySelector('#retryAdminPlaza').onclick = () => refreshCompactPlazaPanel(page);
+  }
+}
+
+async function refreshCompactCheckinSettings() {
+  const panel = document.querySelector('#adminPanel-checkin');
+  if (!panel || panel.hidden) return;
+  panel.innerHTML = '<div class="admin-panel-loading">正在读取打卡设置…</div>';
+  try {
+    const result = await api('/api/admin/checkin-settings');
+    const settings = result.settings || {};
+    const weekdays = new Set((settings.weekdays || [1,2,3,4,5,6,7]).map(Number));
+    panel.innerHTML = `<form id="compactCheckinSettings" class="admin-compact-form checkin-settings-form">
+      <label class="switch-line"><input name="enabled" type="checkbox" ${settings.enabled !== false ? 'checked' : ''}>开放打卡</label>
+      <div class="settings-grid"><label>开始日期<input name="activeStartDate" type="date" value="${escapeHtml(settings.activeStartDate || '')}" required></label>
+      <label>结束日期<input name="activeEndDate" type="date" value="${escapeHtml(settings.activeEndDate || '')}" required></label>
+      <label>每日开始<input name="dailyStart" type="time" value="${escapeHtml(settings.dailyStart || '00:00')}" required></label>
+      <label>每日结束<input name="dailyEnd" type="time" value="${escapeHtml(settings.dailyEnd || '23:59')}" required></label>
+      <label>个人打卡照片数<input name="personalImageLimit" type="number" min="1" max="8" value="${Number(settings.personalImageLimit || 3)}" required></label>
+      <label>队伍汇总照片数<input name="teamImageLimit" type="number" min="1" max="8" value="${Number(settings.teamImageLimit || 3)}" required></label></div>
+      <fieldset><legend>允许打卡的星期</legend><div class="weekday-options">${[1,2,3,4,5,6,7].map((day) => `<label><input type="checkbox" name="weekdays" value="${day}" ${weekdays.has(day) ? 'checked' : ''}>周${day}</label>`).join('')}</div></fieldset>
+      <button>保存打卡设置</button>
+    </form>`;
+    panel.querySelector('#compactCheckinSettings').onsubmit = async (event) => {
+      event.preventDefault();
+      const restore = beginButtonLoading(event.submitter, '保存中…');
+      const form = event.target;
+      const values = Object.fromEntries(new FormData(form));
+      const selectedWeekdays = [...form.querySelectorAll('[name=weekdays]:checked')].map((input) => Number(input.value));
       try {
-        await api(`/api/admin/submissions/${button.dataset.id}`, { method: 'PATCH', body: JSON.stringify({ status: returning ? 'returned' : 'approved', reviewNote }) });
-        admin(date);
-      } catch (error) { alert(error.message); }
+        await api('/api/admin/checkin-settings', { method: 'PUT', body: JSON.stringify({
+          ...values,
+          enabled: form.enabled.checked,
+          weekdays: selectedWeekdays,
+          personalImageLimit: Number(values.personalImageLimit),
+          teamImageLimit: Number(values.teamImageLimit)
+        }) });
+        studentDashboardDirty = true;
+        studentViewState.dirty = true;
+        showToast('打卡设置已保存');
+        await refreshCompactCheckinSettings();
+      } catch (error) { restore(); alert(error.message); }
     };
+  } catch (error) {
+    panel.innerHTML = `<div class="admin-inline-error"><p>${escapeHtml(error.message)}</p><button id="retryCheckinSettings">重新加载</button></div>`;
+    panel.querySelector('#retryCheckinSettings').onclick = refreshCompactCheckinSettings;
+  }
+}
+
+async function setCompactAdminPanel(name) {
+  const modules = [...document.querySelectorAll('[data-admin-module]')];
+  const selected = document.querySelector(`[data-admin-module="${name}"]`);
+  const wasOpen = selected?.classList.contains('is-open');
+  modules.forEach((module) => {
+    const open = module === selected && !wasOpen;
+    module.classList.toggle('is-open', open);
+    const trigger = module.querySelector('.admin-accordion-trigger');
+    const panel = module.querySelector('.admin-accordion-panel');
+    trigger?.setAttribute('aria-expanded', String(open));
+    if (panel) panel.hidden = !open;
   });
-  document.querySelectorAll('.delete-submission').forEach((button) => {
-    button.onclick = async () => {
-      if (!await askConfirm('是否删除该提交？', '关联的广场帖子也会删除，此操作不可恢复。')) return;
-      await api(`/api/admin/submissions/${button.dataset.id}`, { method: 'DELETE' });
-      admin(date);
-    };
+  adminDashboardState.openPanel = wasOpen ? '' : name;
+  sessionStorage.setItem('adminCompactPanel', adminDashboardState.openPanel);
+  if (wasOpen) return;
+  if (name === 'checkin') await refreshCompactCheckinSettings();
+  if (name === 'team') await refreshCompactTeamPanel(false);
+  if (name === 'user') renderCompactUserManagement();
+  if (name === 'plaza') await refreshCompactPlazaPanel(adminDashboardState.plazaPage || 1);
+}
+
+async function openLegacyAdminTools(date) {
+  await legacyAdmin(date);
+  const headerRow = document.querySelector('.hero .row');
+  if (!headerRow || document.querySelector('#backCompactAdmin')) return;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.id = 'backCompactAdmin';
+  button.className = 'secondary';
+  button.textContent = '返回精简后台';
+  button.onclick = () => admin(date);
+  headerRow.append(button);
+}
+
+async function admin(selectedDate, pageEpoch = beginNavigation()) {
+  if (!isCurrentNavigation(pageEpoch)) return;
+  document.body.dataset.view = 'admin';
+  const date = selectedDate || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
+  adminDashboardState.date = date;
+  app.innerHTML = `
+    <header class="hero admin-refactor-hero">
+      <div class="row"><div><h1>活动管理后台</h1><div>${escapeHtml(config.activityName)}</div></div>
+        <div class="admin-header-actions right">
+          <button class="secondary" id="ranking">排行榜</button>
+          <button class="secondary" id="plaza">活动广场</button>
+          <button class="secondary" id="commentAdmin">评论管理</button>
+          <button class="secondary" id="legacyAdminTools">高级工具</button>
+          <button class="secondary" id="out">退出</button>
+        </div>
+      </div>
+    </header>
+    <main class="admin-refactor-shell">
+      <section class="card admin-user-section" id="adminUserCore" aria-busy="true">
+        <div class="admin-panel-loading">正在加载用户完成情况…</div>
+      </section>
+      <div class="admin-management-stack" aria-label="后台管理模块">
+        ${adminAccordionMarkup('checkin', '打卡设置', '打卡日期、时段、星期与照片数量')}
+        ${adminAccordionMarkup('team', '队伍管理', '队伍列表、手动创建与 Excel 导入')}
+        ${adminAccordionMarkup('user', '用户管理', '单个添加与 Excel 批量导入')}
+        ${adminAccordionMarkup('plaza', '活动广场管理', '紧凑列表，查看详情后再执行管理操作')}
+      </div>
+      <p class="admin-advanced-note">任务设置、最终截图、导出、管理员监督等低频功能已移至“高级工具”，不会参与首页加载。</p>
+    </main>
+    <div id="modalRoot"></div>`;
+  prepareDynamicContent(app);
+  document.querySelector('#out').onclick = logout;
+  document.querySelector('#ranking').onclick = () => rankings();
+  document.querySelector('#plaza').onclick = () => plaza();
+  document.querySelector('#commentAdmin').onclick = () => adminComments();
+  document.querySelector('#legacyAdminTools').onclick = () => openLegacyAdminTools(date);
+  document.querySelectorAll('[data-admin-panel-target]').forEach((button) => {
+    button.onclick = () => setCompactAdminPanel(button.dataset.adminPanelTarget);
   });
-  document.querySelectorAll('.toggle-post').forEach((button) => {
-    button.onclick = async (event) => {
-      const restoreButton = beginButtonLoading(event.currentTarget, '处理中…');
-      try {
-        await api(`/api/admin/plaza/${button.dataset.id}`, { method: 'PATCH', body: JSON.stringify({ status: button.dataset.status }) });
-        plazaViewCache.clear();
-        rankingViewCache.clear();
-        admin(date);
-      } catch (error) {
-        restoreButton();
-        alert(error.message);
-      }
-    };
-  });
-  document.querySelectorAll('.delete-post').forEach((button) => {
-    button.onclick = async (event) => {
-      if (!await askConfirm('是否永久删除该广场帖子？', '任务提交记录不会删除，此操作不可恢复。')) return;
-      const restoreButton = beginButtonLoading(event.currentTarget, '删除中…');
-      try {
-        await api(`/api/admin/plaza/${button.dataset.id}`, { method: 'DELETE' });
-        plazaViewCache.clear();
-        rankingViewCache.clear();
-        admin(date);
-      } catch (error) {
-        restoreButton();
-        alert(error.message);
-      }
-    };
-  });
-  document.querySelectorAll('.exclude-post').forEach((button) => {
-    button.onclick = async (event) => {
-      const restoreButton = beginButtonLoading(event.currentTarget, '处理中…');
-      try {
-        await api(`/api/admin/plaza/${button.dataset.id}`, { method: 'PATCH', body: JSON.stringify({ excludedFromRanking: button.dataset.excluded === 'true' }) });
-        plazaViewCache.clear();
-        rankingViewCache.clear();
-        admin(date);
-      } catch (error) {
-        restoreButton();
-        alert(error.message);
-      }
-    };
-  });
-  document.querySelectorAll('.export-data').forEach((button) => {
-    button.onclick = async () => {
-      const exportDate = document.querySelector('#exportDate').value;
-      const exportMonth = document.querySelector('#exportMonth').value;
-      try {
-        await downloadApiFile(`/api/admin/exports/${button.dataset.type}?date=${exportDate}&month=${exportMonth}`);
-      } catch (error) { alert(error.message); }
-    };
-  });
-  document.querySelectorAll('.admin-material-download').forEach((button) => {
-    button.onclick = () => downloadProtectedFile(button.dataset.url, button.dataset.name).catch((error) => alert(error.message));
-  });
-  document.querySelectorAll('.return-material').forEach((button) => {
-    button.onclick = async () => {
-      const reviewNote = await askText('退回最终截图证明', '请填写需要修改的原因。', '退回原因');
-      if (!reviewNote) return;
-      await api(`/api/admin/material-submissions/${button.dataset.id}`, { method: 'PATCH', body: JSON.stringify({ reviewNote }) });
-      admin(date);
-    };
-  });
-  document.querySelectorAll('.missing-material').forEach((button) => {
-    button.onclick = () => downloadApiFile(`/api/admin/material-tasks/${button.dataset.id}/missing-export`).catch((error) => alert(error.message));
-  });
+  await refreshCompactAdminUsers(date);
+  if (!isCurrentNavigation(pageEpoch)) return;
+  if (adminDashboardState.openPanel) await setCompactAdminPanel(adminDashboardState.openPanel);
   requestAnimationFrame(() => window.scrollTo(0, Number(sessionStorage.adminScrollY || 0)));
 }
 
@@ -697,49 +701,52 @@ function enhanceAdminSections() {
   });
 }
 
-function openAdminUserDrawer(studentUser, teams, date, tasks = []) {
-  const root = document.querySelector('#modalRoot');
-  const team = teams.find((item) => item.members.some((member) => member.id === studentUser.id));
-  const isHealth = studentUser.trackId === 'health';
-  const interactionTasks = tasks.filter((task) => task.trackId === 'interaction');
-  const sectionState = new Map();
+/* MOBILE_ADMIN_PHOTO_FIX_V1 */
+const ADMIN_CHECKIN_CACHE_TTL_MS = 60_000;
+const adminCheckinViewCache = new Map();
+const adminCheckinInflight = new Map();
+
+function openAdminUserDrawer(studentUser, date) {
+  let root = document.querySelector('#modalRoot');
+  if (!root) {
+    root = document.createElement('div');
+    root.id = 'modalRoot';
+    app.append(root);
+  }
+  const cacheKey = `${studentUser.id}|${date}`;
   root.innerHTML = `<div class="drawer-backdrop" id="userDrawerBackdrop">
-    <section class="bottom-drawer" role="dialog" aria-modal="true" aria-labelledby="userDrawerTitle">
+    <section class="bottom-drawer admin-checkin-drawer" role="dialog" aria-modal="true" aria-labelledby="userDrawerTitle" data-checkin-key="${escapeHtml(cacheKey)}">
       <div class="drawer-handle" aria-hidden="true"></div>
       <div class="drawer-sticky-header row">
-        <div><small class="muted">用户详情</small><h2 id="userDrawerTitle">${escapeHtml(studentUser.name)}</h2></div>
+        <div><small class="muted">打卡情况</small><h2 id="userDrawerTitle">${escapeHtml(studentUser.name)}</h2></div>
         <button class="secondary right" id="closeUserDrawer">关闭</button>
       </div>
-      <div class="drawer-summary">
-        <div><span>学号</span><strong>${escapeHtml(studentUser.studentId)}</strong></div>
-        <div><span>账号状态</span><strong>${studentUser.status === 'active' ? '启用' : '禁用'}</strong></div>
-        <div><span>所属赛道</span><strong>${escapeHtml(trackName(studentUser.trackId))}</strong></div>
-        <div><span>最近状态</span><strong>${studentUser.completed ? '已完成' : '未完成'}</strong></div>
+      <div class="admin-checkin-date">${escapeHtml(date)}</div>
+      <div id="adminCheckinRecords" class="admin-checkin-records" aria-busy="true">
+        <div class="admin-checkin-skeleton" aria-label="正在读取打卡照片"></div>
       </div>
-      <div class="drawer-accordions">
+      <div class="drawer-accordions admin-user-management">
         ${[
-          ['records', '最近打卡记录', studentUser.submittedAt ? formatDate(studentUser.submittedAt) : '暂无提交', true],
-          ['profile', '基本资料', `${studentUser.campus || '未设置'} · 累计 ${Number(studentUser.totalCompletedDays || 0)} 天`, false],
-          ['team', '所属队伍', team?.name || '未加入队伍', false],
-          ['makeup', '补卡权限', '点击查看当前状态', false],
-          ['adminMakeup', '管理员代为补卡', '按需展开', false],
-          ['manage', '管理操作', '编辑或禁用账号', false]
-        ].map(([key, label, summary, open]) => `
-          <section class="drawer-accordion ${open ? 'is-open' : ''}" data-drawer-section="${key}">
-            <button class="drawer-accordion-toggle" type="button" aria-expanded="${open}">
-              <span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(summary)}</small></span><b aria-hidden="true">›</b>
-            </button>
-            <div class="drawer-accordion-panel" ${open ? '' : 'hidden'}><div class="drawer-panel-inner" data-panel-content="${key}"></div></div>
-          </section>`).join('')}
+          ['profile', '基本资料'],
+          ['team', '所属队伍'],
+          ['makeup', '补卡权限'],
+          ['adminMakeup', '管理员代为补卡'],
+          ['manage', '管理操作']
+        ].map(([key, label]) => `<section class="drawer-accordion" data-drawer-section="${key}">
+          <button class="drawer-accordion-toggle" type="button" aria-expanded="false"><span><strong>${label}</strong><small>点击展开</small></span><b aria-hidden="true">›</b></button>
+          <div class="drawer-accordion-panel" hidden><div class="drawer-panel-inner" data-panel-content="${key}"></div></div>
+        </section>`).join('')}
       </div>
     </section>
   </div>`;
 
   const backdrop = root.querySelector('#userDrawerBackdrop');
-  const drawer = root.querySelector('.bottom-drawer');
+  const drawer = root.querySelector('.admin-checkin-drawer');
+  const recordsRoot = root.querySelector('#adminCheckinRecords');
   const close = () => { root.innerHTML = ''; };
   root.querySelector('#closeUserDrawer').onclick = close;
   backdrop.onclick = (event) => { if (event.target === backdrop) close(); };
+
   let touchStartY = null;
   drawer.addEventListener('touchstart', (event) => {
     if (event.target.closest('.drawer-handle')) touchStartY = event.touches[0].clientY;
@@ -749,174 +756,142 @@ function openAdminUserDrawer(studentUser, teams, date, tasks = []) {
     touchStartY = null;
   }, { passive: true });
 
-  const renderImages = (images, label) => images.length
-    ? `<div class="drawer-photo-grid compact">${images.map((media, index) => {
-      const thumbUrl = typeof media === 'string' ? media : media.thumbUrl || media.imageUrl;
-      const displayUrl = typeof media === 'string' ? media : media.displayUrl || thumbUrl;
-      return `
-        <button class="image-viewer-trigger" data-image-viewer="${escapeHtml(thumbUrl)}"
-          data-image-thumb="${escapeHtml(thumbUrl)}" data-image-display="${escapeHtml(displayUrl)}"
-          data-image-alt="${escapeHtml(label)}">
-          <span class="image-shell"><img data-src="${escapeHtml(thumbUrl)}" data-priority="${index === 0 ? 'high' : ''}"
-            loading="${index === 0 ? 'eager' : 'lazy'}" fetchpriority="${index === 0 ? 'high' : 'auto'}"
-            width="480" height="360" decoding="async" alt="${escapeHtml(label)}"
-            onload="this.parentElement.classList.add('loaded')"
-            onerror="this.hidden=true;this.parentElement.classList.add('failed')"><span class="image-error">图片加载失败，点击重试</span></span>
-        </button>`;
-    }).join('')}</div>` : '';
-
-  const loadRecords = async (panel, force = false) => {
-    if (sectionState.get('records') && !force) return;
-    sectionState.set('records', 'loading');
-    panel.innerHTML = '<p class="muted">正在读取最近打卡记录…</p>';
-    try {
-      const result = await api(`/api/admin/users/${encodeURIComponent(studentUser.id)}/checkins?date=${encodeURIComponent(date)}`);
-      const bySlot = new Map(result.records.map((item) => [item.slotId, item]));
-      const records = isHealth ? config.slots.map((slot) => {
-        const record = bySlot.get(slot.id);
-        return record ? { ...record, taskName: slot.label } : null;
-      }).filter(Boolean) : result.records;
-      panel.innerHTML = records.length ? `<div class="meal-status-grid">${records.map((record) => `
-        <article class="meal-status-card completed">
-          <div class="row"><strong>${escapeHtml(record.taskName || record.slotId || '打卡')}</strong><span class="pill done">${escapeHtml(record.status || '已提交')}</span></div>
-          <small>${escapeHtml(formatDate(record.submittedAt))}</small>
-          ${renderImages(record.images || [], `${record.taskName || record.slotId || '打卡'}图片`)}
-          ${record.note ? `<p>${escapeHtml(record.note)}</p>` : ''}
-        </article>`).join('')}</div>` : '<p class="muted">当日暂无提交</p>';
-      prepareDynamicContent(panel);
-      const firstImageMedia = result.records.flatMap((item) => item.images || [])[0];
-      const firstImage = typeof firstImageMedia === 'string'
-        ? firstImageMedia
-        : firstImageMedia?.displayUrl || firstImageMedia?.thumbUrl;
-      if (firstImage) {
-        const preload = new Image();
-        preload.decoding = 'async';
-        preload.fetchPriority = 'low';
-        preload.src = firstImage;
-      }
-      sectionState.set('records', 'loaded');
-    } catch (error) {
-      panel.innerHTML = `<button class="secondary retry-drawer-records">读取失败，点击重试</button>`;
-      panel.querySelector('.retry-drawer-records').onclick = () => loadRecords(panel, true);
-      sectionState.delete('records');
+  let managementPromise = null;
+  const loadManagementData = () => {
+    if (!managementPromise) {
+      managementPromise = Promise.all([loadCompactAdminTeams(), api('/api/admin/tasks')])
+        .then(([teamResult, taskResult]) => ({ teams: teamResult.teams || [], tasks: taskResult.tasks || [] }))
+        .catch((error) => { managementPromise = null; throw error; });
     }
+    return managementPromise;
   };
-
-  const loadSection = async (key, panel) => {
-    if (key === 'records') return loadRecords(panel);
-    if (sectionState.get(key)) return;
-    sectionState.set(key, 'loaded');
-    if (key === 'profile') {
-      panel.innerHTML = `<dl class="user-detail-list">
-        <div><dt>姓名</dt><dd>${escapeHtml(studentUser.name)}</dd></div>
-        <div><dt>学号</dt><dd>${escapeHtml(studentUser.studentId)}</dd></div>
-        <div><dt>校区</dt><dd>${escapeHtml(studentUser.campus || '未设置')}</dd></div>
-        <div><dt>创建时间</dt><dd>${escapeHtml(formatDate(studentUser.createdAt))}</dd></div>
-        <div><dt>累计完成</dt><dd>${Number(studentUser.totalCompletedDays || 0)} 天</dd></div>
-      </dl>`;
-    } else if (key === 'team') {
-      panel.innerHTML = team
-        ? `<p><strong>${escapeHtml(team.name)}</strong></p><p class="muted">${team.memberCount}/${team.memberLimit} 人</p>`
-        : '<p class="muted">该用户尚未加入队伍</p>';
-    } else if (key === 'makeup') {
-      panel.innerHTML = '<p class="muted">正在读取补卡权限…</p>';
-      try {
+  const loadManagementSection = async (key, panel) => {
+    if (panel.dataset.loaded === 'true') return;
+    panel.innerHTML = '<p class="muted">正在读取…</p>';
+    try {
+      if (key === 'profile') {
+        panel.innerHTML = `<dl class="user-detail-list"><div><dt>姓名</dt><dd>${escapeHtml(studentUser.name)}</dd></div><div><dt>学号</dt><dd>${escapeHtml(studentUser.studentId)}</dd></div><div><dt>校区</dt><dd>${escapeHtml(studentUser.campus || '未设置')}</dd></div><div><dt>累计完成</dt><dd>${Number(studentUser.totalCompletedDays || 0)} 天</dd></div></dl>`;
+      } else if (key === 'team') {
+        const { teams } = await loadManagementData();
+        const team = teams.find((item) => (item.members || []).some((member) => member.id === studentUser.id));
+        panel.innerHTML = team ? `<p><strong>${escapeHtml(team.name)}</strong></p><p class="muted">${team.memberCount}/${team.memberLimit} 人</p>` : '<p class="muted">该用户尚未加入队伍</p>';
+      } else if (key === 'makeup') {
         const permission = await api(`/api/admin/users/${encodeURIComponent(studentUser.id)}/makeup-permission?date=${encodeURIComponent(date)}`);
         let enabled = Boolean(permission.enabled);
-        panel.innerHTML = `<div class="row"><p class="muted">仅对 ${escapeHtml(date)} 生效；默认关闭。</p>
-          <button class="${enabled ? 'danger' : 'secondary'} right" id="toggleMakeupPermission">${enabled ? '关闭用户补卡' : '允许用户补卡'}</button></div>`;
+        panel.innerHTML = `<div class="row"><p class="muted">仅对 ${escapeHtml(date)} 生效；默认关闭。</p><button class="${enabled ? 'danger' : 'secondary'} right" id="toggleMakeupPermission">${enabled ? '关闭用户补卡' : '允许用户补卡'}</button></div>`;
         panel.querySelector('#toggleMakeupPermission').onclick = async (event) => {
-          event.currentTarget.disabled = true;
+          const restore = beginButtonLoading(event.currentTarget, '处理中…');
           try {
-            await api(`/api/admin/users/${encodeURIComponent(studentUser.id)}/makeup-permission?date=${encodeURIComponent(date)}`, {
-              method: 'PUT', body: JSON.stringify({ enabled: !enabled })
-            });
+            await api(`/api/admin/users/${encodeURIComponent(studentUser.id)}/makeup-permission?date=${encodeURIComponent(date)}`, { method: 'PUT', body: JSON.stringify({ enabled: !enabled }) });
             enabled = !enabled;
             event.currentTarget.textContent = enabled ? '关闭用户补卡' : '允许用户补卡';
             event.currentTarget.className = enabled ? 'danger right' : 'secondary right';
-          } catch (error) { alert(error.message); }
-          finally { event.currentTarget.disabled = false; }
+          } catch (error) { alert(error.message); } finally { restore(); }
         };
-      } catch (error) {
-        panel.innerHTML = `<p class="muted">${escapeHtml(error.message)}</p>`;
+      } else if (key === 'adminMakeup') {
+        const { tasks } = await loadManagementData();
+        const isHealth = studentUser.trackId === 'health';
+        const interactionTasks = tasks.filter((task) => task.trackId === 'interaction');
+        panel.innerHTML = `<form id="adminMakeupForm">${isHealth ? `<label>餐次</label><select name="slotId">${config.slots.map((slot) => `<option value="${slot.id}">${escapeHtml(slot.label)}</option>`).join('')}</select>` : `<label>活动任务</label><select name="taskId" required>${interactionTasks.map((task) => `<option value="${task.id}">${escapeHtml(task.name)}</option>`).join('')}</select>`}<label>补卡图片</label><input name="photos" type="file" accept="image/jpeg,image/png,image/webp" required>${isHealth ? '<label>备注（可选）</label><textarea name="note"></textarea>' : ''}<button>确认管理员补卡</button></form>`;
+        panel.querySelector('#adminMakeupForm').onsubmit = async (event) => {
+          event.preventDefault();
+          const form = event.target;
+          const restore = beginButtonLoading(event.submitter, '补卡中…');
+          try {
+            const photos = await readFiles(form.photos.files, { taskId: isHealth ? null : form.taskId.value, businessType: 'admin-makeup', limit: isHealth ? 3 : 1 });
+            await api(`/api/admin/users/${encodeURIComponent(studentUser.id)}/makeup`, { method: 'POST', body: JSON.stringify(isHealth ? { date, slotId: form.slotId.value, mediaIds: photos.map((item) => item.mediaId), note: form.note.value } : { date, taskId: form.taskId.value, mediaIds: photos.map((item) => item.mediaId) }) });
+            adminCheckinViewCache.delete(cacheKey);
+            showToast('补卡已完成');
+            openAdminUserDrawer(studentUser, date);
+          } catch (error) { alert(error.message); } finally { restore(); }
+        };
+      } else if (key === 'manage') {
+        panel.innerHTML = `<div class="drawer-actions"><button class="secondary" id="editDrawerUser">编辑用户</button><button class="${studentUser.status === 'active' ? 'danger' : 'secondary'}" id="toggleDrawerUser">${studentUser.status === 'active' ? '禁用用户' : '启用用户'}</button></div>`;
+        panel.querySelector('#editDrawerUser').onclick = () => editUser(studentUser, date);
+        panel.querySelector('#toggleDrawerUser').onclick = async (event) => {
+          const next = studentUser.status === 'active' ? 'disabled' : 'active';
+          if (!await askConfirm(`是否${next === 'disabled' ? '禁用' : '启用'}该用户？`, '操作将立即影响该账号的登录状态。')) return;
+          const restore = beginButtonLoading(event.currentTarget, '处理中…');
+          try {
+            await api(`/api/admin/users/${encodeURIComponent(studentUser.id)}/status`, { method: 'PATCH', body: JSON.stringify({ status: next }) });
+            studentUser.status = next;
+            event.currentTarget.textContent = next === 'active' ? '禁用用户' : '启用用户';
+          } catch (error) { alert(error.message); } finally { restore(); }
+        };
       }
-    } else if (key === 'adminMakeup') {
-      panel.innerHTML = `<form id="adminMakeupForm">
-        ${isHealth
-          ? `<label>餐次</label><select name="slotId">${config.slots.map((slot) => `<option value="${slot.id}">${escapeHtml(slot.label)}</option>`).join('')}</select>`
-          : `<label>活动任务</label><select name="taskId" required>${interactionTasks.map((task) => `<option value="${task.id}">${escapeHtml(task.name)}</option>`).join('')}</select>`}
-        <label>补卡图片</label><input name="photos" type="file" accept="image/jpeg,image/png,image/webp" required>
-        ${isHealth ? '<label>备注（可选）</label><textarea name="note"></textarea>' : ''}
-        <button>确认管理员补卡</button>
-      </form>`;
-      panel.querySelector('#adminMakeupForm').onsubmit = async (event) => {
-        event.preventDefault();
-        const form = event.target;
-        const submit = form.querySelector('button');
-        submit.disabled = true;
-        try {
-          const photos = await readFiles(form.photos.files, {
-            taskId: isHealth ? null : form.taskId.value,
-            businessType: 'admin-makeup',
-            limit: isHealth ? 3 : 1
-          });
-          await api(`/api/admin/users/${encodeURIComponent(studentUser.id)}/makeup`, {
-            method: 'POST',
-            body: JSON.stringify(isHealth
-              ? { date, slotId: form.slotId.value, mediaIds: photos.map((item) => item.mediaId), note: form.note.value }
-              : { date, taskId: form.taskId.value, mediaIds: photos.map((item) => item.mediaId) })
-          });
-          const recordsPanel = root.querySelector('[data-panel-content="records"]');
-          sectionState.delete('records');
-          await loadRecords(recordsPanel, true);
-          alert('补卡已完成');
-        } catch (error) { alert(error.message); }
-        finally { submit.disabled = false; }
-      };
-    } else if (key === 'manage') {
-      panel.innerHTML = `<div class="drawer-actions">
-        <button class="secondary" id="editDrawerUser">编辑用户</button>
-        <button class="${studentUser.status === 'active' ? 'danger' : 'secondary'}" id="toggleDrawerUser">${studentUser.status === 'active' ? '禁用用户' : '启用用户'}</button>
-      </div>`;
-      panel.querySelector('#editDrawerUser').onclick = () => editUser(studentUser, date);
-      panel.querySelector('#toggleDrawerUser').onclick = async (event) => {
-        const next = studentUser.status === 'active' ? 'disabled' : 'active';
-        const action = next === 'disabled' ? '禁用' : '启用';
-        if (!await askConfirm(`是否${action}该用户？`, `${action}后将立即影响该账号的登录状态。`)) return;
-        event.currentTarget.disabled = true;
-        try {
-          await api(`/api/admin/users/${encodeURIComponent(studentUser.id)}/status`, {
-            method: 'PATCH', body: JSON.stringify({ status: next })
-          });
-          studentUser.status = next;
-          event.currentTarget.textContent = next === 'active' ? '禁用用户' : '启用用户';
-          event.currentTarget.className = next === 'active' ? 'danger' : 'secondary';
-        } catch (error) { alert(error.message); }
-        finally { event.currentTarget.disabled = false; }
-      };
+      panel.dataset.loaded = 'true';
+    } catch (error) {
+      panel.innerHTML = `<p class="muted">${escapeHtml(error.message)}</p><button class="secondary retry-management-section">重新加载</button>`;
+      panel.querySelector('.retry-management-section').onclick = () => loadManagementSection(key, panel);
     }
   };
-
   root.querySelectorAll('.drawer-accordion-toggle').forEach((toggle) => {
     toggle.onclick = () => {
       const section = toggle.closest('.drawer-accordion');
-      const key = section.dataset.drawerSection;
-      const shouldOpen = !section.classList.contains('is-open');
-      root.querySelectorAll('.drawer-accordion').forEach((item) => {
-        item.classList.remove('is-open');
-        item.querySelector('.drawer-accordion-toggle').setAttribute('aria-expanded', 'false');
-        item.querySelector('.drawer-accordion-panel').hidden = true;
-      });
-      if (!shouldOpen) return;
-      section.classList.add('is-open');
-      toggle.setAttribute('aria-expanded', 'true');
       const panel = section.querySelector('.drawer-accordion-panel');
-      panel.hidden = false;
-      void loadSection(key, panel.querySelector('.drawer-panel-inner'));
+      const open = panel.hidden;
+      panel.hidden = !open;
+      section.classList.toggle('is-open', open);
+      toggle.setAttribute('aria-expanded', String(open));
+      if (open) void loadManagementSection(section.dataset.drawerSection, panel.querySelector('.drawer-panel-inner'));
     };
   });
-  const initialRecords = root.querySelector('[data-panel-content="records"]');
-  void loadRecords(initialRecords);
+
+  const render = (result) => {
+    if (!drawer.isConnected || drawer.dataset.checkinKey !== cacheKey) return;
+    const records = Array.isArray(result?.records) ? result.records : [];
+    recordsRoot.setAttribute('aria-busy', 'false');
+    recordsRoot.innerHTML = records.length ? records.map((record) => {
+      const images = Array.isArray(record.images) ? record.images : [];
+      const photos = images.map((media, imageIndex) => {
+        const thumbUrl = typeof media === 'string' ? media : media.thumbUrl || media.imageUrl || media.displayUrl;
+        const displayUrl = typeof media === 'string' ? media : media.displayUrl || thumbUrl;
+        if (!thumbUrl) return '';
+        return `<button type="button" class="image-viewer-trigger admin-checkin-photo"
+          data-image-viewer="${escapeHtml(thumbUrl)}" data-image-thumb="${escapeHtml(thumbUrl)}"
+          data-image-display="${escapeHtml(displayUrl)}" data-image-alt="打卡照片">
+          <span class="image-shell"><img data-perf-image="admin-checkin-thumb" ${imageIndex === 0 ? 'src' : 'data-src'}="${escapeHtml(thumbUrl)}" loading="${imageIndex === 0 ? 'eager' : 'lazy'}"
+            fetchpriority="${imageIndex === 0 ? 'high' : 'low'}" decoding="async" width="540" height="405" alt="打卡照片"
+            onload="this.parentElement.classList.add('loaded')"
+            onerror="this.hidden=true;this.parentElement.classList.add('failed')"><span class="image-error">图片加载失败，点击重试</span></span>
+        </button>`;
+      }).join('');
+      return `<article class="admin-checkin-record">
+        <div class="admin-checkin-record-head"><strong>${escapeHtml(record.taskName || record.slotId || '打卡')}</strong><span class="pill done">${escapeHtml(record.status || '已提交')}</span></div>
+        ${photos ? `<div class="admin-checkin-photo-grid">${photos}</div>` : '<p class="muted">暂无照片</p>'}
+      </article>`;
+    }).join('') : '<p class="admin-checkin-empty">当日暂无打卡</p>';
+    prepareDynamicContent(recordsRoot);
+  };
+
+  const cached = adminCheckinViewCache.get(cacheKey);
+  if (cached && Date.now() - cached.savedAt < ADMIN_CHECKIN_CACHE_TTL_MS) {
+    render(cached.data);
+    return;
+  }
+
+  const load = async () => {
+    let promise = adminCheckinInflight.get(cacheKey);
+    if (!promise) {
+      promise = api(`/api/admin/users/${encodeURIComponent(studentUser.id)}/checkins?date=${encodeURIComponent(date)}`, { timeoutMs: 8_000 })
+        .finally(() => adminCheckinInflight.delete(cacheKey));
+      adminCheckinInflight.set(cacheKey, promise);
+    }
+    try {
+      const result = await promise;
+      adminCheckinViewCache.set(cacheKey, { data: result, savedAt: Date.now() });
+      render(result);
+    } catch (error) {
+      if (!drawer.isConnected) return;
+      recordsRoot.setAttribute('aria-busy', 'false');
+      recordsRoot.innerHTML = `<div class="admin-inline-error"><p>${escapeHtml(error.message)}</p><button type="button" id="retryAdminCheckins">重新加载</button></div>`;
+      recordsRoot.querySelector('#retryAdminCheckins').onclick = () => {
+        adminCheckinViewCache.delete(cacheKey);
+        openAdminUserDrawer(studentUser, date);
+      };
+    }
+  };
+  void load();
 }
 
 function taskFormFields(task = {}, requestedType = '') {
@@ -1114,5 +1089,27 @@ function reviewCheckin(students, checkinId, date) {
   document.querySelector('#approve').onclick = () => update('approved');
   document.querySelector('#reject').onclick = () => update('rejected');
 }
+
+const installPerfDiagnostics = () => {
+  let enabled = false;
+  try { enabled = new URLSearchParams(location.search).get('debugPerf') === '1' || localStorage.getItem('debugPerf') === '1'; } catch {}
+  if (!enabled || document.querySelector('#perfDiagnosticsButton')) return;
+  const button = document.createElement('button');
+  button.id = 'perfDiagnosticsButton';
+  button.type = 'button';
+  button.textContent = '性能数据';
+  button.onclick = () => {
+    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection || {};
+    const payload = { capturedAt: new Date().toISOString(), userAgent: navigator.userAgent, viewport: `${innerWidth}x${innerHeight}`, devicePixelRatio, network: { effectiveType: connection.effectiveType || '', downlink: connection.downlink || 0, rtt: connection.rtt || 0, saveData: Boolean(connection.saveData) }, metrics: window.__PERF_METRICS__ || [] };
+    let root = document.querySelector('#perfDiagnosticsRoot');
+    if (!root) { root = document.createElement('div'); root.id = 'perfDiagnosticsRoot'; document.body.append(root); }
+    root.innerHTML = `<div class="perf-diagnostics-backdrop"><section class="perf-diagnostics-card"><div class="row"><h2>实体设备性能数据</h2><button type="button" class="secondary" data-perf-close>关闭</button></div><textarea readonly>${escapeHtml(JSON.stringify(payload, null, 2))}</textarea><button type="button" data-perf-copy>复制数据</button><button type="button" class="secondary" data-perf-clear>清空后重测</button></section></div>`;
+    root.querySelector('[data-perf-close]').onclick = () => { root.innerHTML = ''; };
+    root.querySelector('[data-perf-copy]').onclick = async () => { try { await navigator.clipboard.writeText(JSON.stringify(payload, null, 2)); showToast('性能数据已复制'); } catch { root.querySelector('textarea').select(); document.execCommand('copy'); showToast('性能数据已复制'); } };
+    root.querySelector('[data-perf-clear]').onclick = () => { window.__PERF_METRICS__ = []; activePhotoFlow = null; root.innerHTML = ''; showToast('已清空，请重新打开目标页面测试'); };
+  };
+  document.body.append(button);
+};
+setTimeout(installPerfDiagnostics, 0);
 
 window.__ADMIN_CLIENT_RENDER__ = (selectedDate, pageEpoch) => admin(selectedDate, pageEpoch);

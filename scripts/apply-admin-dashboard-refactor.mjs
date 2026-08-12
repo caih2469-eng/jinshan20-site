@@ -14,6 +14,7 @@ const adminMarker = '/* ADMIN_DASHBOARD_REFACTOR_V1 */';
 const flowMarker = '/* STUDENT_ADMIN_FLOW_V2 */';
 const backendMarker = '/* STUDENT_ADMIN_FLOW_BACKEND_V2 */';
 const adminAnchor = 'function enhanceAdminSections() {';
+const currentArchitectureAnchor = '/* ADMIN_CLIENT_LAZY_LOADER_V1 */';
 
 const requireFile = (filePath, label) => {
   if (!fs.existsSync(filePath)) throw new Error(`${label}不存在`);
@@ -41,7 +42,59 @@ requireFile(adminTemplatePath, '后台减法重构模板');
 requireFile(flowTemplatePath, '学生与后台流程修复模板');
 
 let appSource = fs.readFileSync(appPath, 'utf8');
-if (!appSource.includes('async function admin(selectedDate, pageEpoch = beginNavigation()) {')) {
+const startedWithLazyAdminClient = appSource.includes(currentArchitectureAnchor);
+
+// A previous lazy split can leave the legacy dashboard in admin-client.js while
+// app.js only carries completion markers. Restore it once, add the compact
+// dashboard alongside the legacy helpers, and let the final performance layer
+// split the complete client again. This keeps ranking, profile, team, make-up
+// and account-management helpers available to the compact dashboard.
+if (appSource.includes(currentArchitectureAnchor)
+    && !appSource.includes('const adminDashboardState = {')) {
+  execFileSync(process.execPath, ['scripts/apply-lazy-admin-client.mjs', '--restore'], { stdio: 'pipe' });
+  appSource = fs.readFileSync(appPath, 'utf8');
+  const originalAdmin = 'async function admin(selectedDate, pageEpoch = beginNavigation()) {';
+  if (!appSource.includes(originalAdmin) || !appSource.includes(adminAnchor)) {
+    throw new Error('Cannot restore the complete admin dashboard before compact refactor');
+  }
+  appSource = appSource.replace(originalAdmin, 'async function legacyAdmin(selectedDate, pageEpoch = beginNavigation()) {');
+  const adminTemplate = fs.readFileSync(adminTemplatePath, 'utf8').trim();
+  appSource = appSource.replace(adminAnchor, `${adminTemplate}\n\n${adminAnchor}`);
+}
+
+// The current UI intentionally retains ranking, profile and team features. Older versions of this
+// generator removed those sections while applying the member check-in template. Materialize only
+// the check-in section on the current architecture, then mark the legacy transforms as satisfied.
+if (!appSource.includes(adminMarker)
+    && appSource.includes('const rankingViewCache = new Map();')
+    && appSource.includes('function memberCheckinForm(task) {')) {
+  const flowTemplate = fs.readFileSync(flowTemplatePath, 'utf8');
+  const memberCheckin = extractSegment(flowTemplate, 'FRONTEND_MEMBER_CHECKIN');
+  appSource = replaceRequired(
+    appSource,
+    /function memberCheckinForm\(task\) \{[\s\S]*?\r?\n\}\r?\n\r?\nfunction materialSubmissionForm\(task\) \{/,
+    `${memberCheckin}\n\nfunction materialSubmissionForm(task) {`,
+    '个人打卡多图函数'
+  );
+  appSource = appSource.replace(
+    currentArchitectureAnchor,
+    `${adminMarker}\n${flowMarker}\n${currentArchitectureAnchor}`
+  );
+}
+
+if (!appSource.includes('function memberCheckinForm(task) {')) {
+  const flowTemplate = fs.readFileSync(flowTemplatePath, 'utf8');
+  const memberCheckin = extractSegment(flowTemplate, 'FRONTEND_MEMBER_CHECKIN');
+  appSource = replaceRequired(
+    appSource,
+    /(  document\.querySelectorAll\('\[data-member-task\]'\)\.forEach\(\(button\) => \{[\s\S]*?\n  \}\);)[\s\S]*?\nfunction materialSubmissionForm\(task\) \{/,
+    `$1\n}\n\n${memberCheckin}\n\nfunction materialSubmissionForm(task) {`,
+    'damaged student tail and member check-in function'
+  );
+}
+
+if (!appSource.includes(adminMarker)
+    && !appSource.includes('async function admin(selectedDate, pageEpoch = beginNavigation()) {')) {
   execFileSync(process.execPath, ['scripts/apply-lazy-admin-client.mjs', '--restore'], { stdio: 'pipe' });
   appSource = fs.readFileSync(appPath, 'utf8');
 }
@@ -186,9 +239,13 @@ if (!appSource.includes(flowMarker)) {
 
 fs.writeFileSync(appPath, appSource, 'utf8');
 
-let entranceSource = fs.readFileSync(entrancePath, 'utf8');
-entranceSource = entranceSource.replace(/\/entrance\.js\?v=[a-zA-Z0-9-]+/, '/entrance.js?v=20260730-flow2');
-fs.writeFileSync(entrancePath, entranceSource, 'utf8');
+if (startedWithLazyAdminClient) {
+  execFileSync(process.execPath, ['scripts/apply-lazy-admin-client.mjs'], { stdio: 'pipe' });
+  execFileSync(process.execPath, ['scripts/apply-mobile-admin-photo-fix.mjs'], { stdio: 'pipe' });
+  execFileSync(process.execPath, ['scripts/apply-approved-lazy-admin.mjs'], { stdio: 'pipe' });
+}
+
+// Asset versioning is owned by the release finalizer. Do not rewrite it during a feature-only pass.
 
 let studentRoute = fs.readFileSync(studentRoutePath, 'utf8');
 if (!studentRoute.includes(backendMarker)) {

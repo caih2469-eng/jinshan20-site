@@ -1,3 +1,7 @@
+/* PLAZA_UNDER_1S_AND_MEMBER_IMAGE_LIMIT_V1 */
+/* PLAZA_DETAIL_INSTANT_OPEN_V2 */
+/* APPROVED_LAYOUT_TEAM_DRAFT_720_V2 */
+/* APPROVED_MOBILE_EXPERIENCE_FINALIZED_V1 */
 const app = document.querySelector('#app');
 let token = '';
 let user = window.__BOOTSTRAP_USER__ || null;
@@ -21,6 +25,8 @@ let midnightRefreshTimer = null;
 let studentDashboardDirty = false;
 const inflightGetRequests = new Map();
 let imageCompressionLibraryPromise = null;
+let imagePipelineLibraryPromise = null;
+let imagePipelineInstance = null;
 const studentViewState = {
   userId: null,
   data: null,
@@ -30,8 +36,14 @@ const studentViewState = {
   refreshPromise: null,
   refreshError: null
 };
-const VIEW_CACHE_TTL_MS = 20_000;
+const VIEW_CACHE_TTL_MS = 60_000;
+/* PLAZA_DETAIL_FAST_PATH_V1 */
+const PLAZA_POST_CACHE_TTL_MS = 30_000;
 const plazaViewCache = new Map();
+const plazaPostCache = new Map();
+const plazaPostInflight = new Map();
+let plazaPostCacheGeneration = 0;
+let studentPlazaPrefetchPromise = null;
 const rankingViewCache = new Map();
 const countedPlazaViews = new Set();
 let plazaModalEpoch = 0;
@@ -47,6 +59,21 @@ const metricPath = (value) => {
   }
 };
 const roundedDuration = (startedAt) => Math.round((performance.now() - startedAt) * 10) / 10;
+/* APPROVED_REAL_DEVICE_PERF_DIAGNOSTICS_V1 */
+let activePhotoFlow = null;
+const startPhotoFlow = (kind) => { activePhotoFlow = { kind, startedAt: performance.now() }; recordPerf('photo-flow-start', { kind }); };
+const photoFlowDuration = (metric) => {
+  if (!activePhotoFlow) return null;
+  const expected = activePhotoFlow.kind;
+  const matches = (expected === 'history' && metric === 'history-thumb')
+    || (expected === 'plaza' && ['plaza-thumb','plaza-detail-thumb'].includes(metric))
+    || (expected === 'admin-checkin' && metric === 'admin-checkin-thumb')
+    || (expected === 'admin-plaza' && metric === 'admin-plaza-thumb');
+  if (!matches) return null;
+  const duration = Math.round((performance.now() - activePhotoFlow.startedAt) * 10) / 10;
+  activePhotoFlow = null;
+  return duration;
+};
 
 const scopedCacheKey = (...parts) => [
   user?.id || user?.studentId || 'anonymous',
@@ -60,8 +87,91 @@ const writeViewCache = (cache, key, data) => {
 const cacheIsFresh = (entry) => Boolean(
   entry && Date.now() - entry.savedAt <= VIEW_CACHE_TTL_MS
 );
+const plazaPostCacheKey = (postId) => scopedCacheKey('plaza-post', postId);
+const readPlazaPostCache = (postId) => {
+  const entry = plazaPostCache.get(plazaPostCacheKey(postId));
+  return entry && Date.now() - entry.savedAt <= PLAZA_POST_CACHE_TTL_MS ? entry.post : null;
+};
+const writePlazaPostCache = (postId, post) => {
+  plazaPostCache.set(plazaPostCacheKey(postId), { post, savedAt: Date.now() });
+  return post;
+};
+const patchPlazaPostCache = (postId, updates) => {
+  const entry = plazaPostCache.get(plazaPostCacheKey(postId));
+  if (entry?.post) Object.assign(entry.post, updates);
+};
+const loadPlazaPost = (postId) => {
+  const cached = readPlazaPostCache(postId);
+  if (cached) return Promise.resolve(cached);
+  const key = plazaPostCacheKey(postId);
+  if (plazaPostInflight.has(key)) return plazaPostInflight.get(key);
+  const generation = plazaPostCacheGeneration;
+  const request = api(`/api/plaza/${encodeURIComponent(postId)}`)
+    .then(({ post }) => {
+      if (generation === plazaPostCacheGeneration) writePlazaPostCache(postId, post);
+      return post;
+    })
+    .finally(() => {
+      if (plazaPostInflight.get(key) === request) plazaPostInflight.delete(key);
+    });
+  plazaPostInflight.set(key, request);
+  return request;
+};
+
+const readPlazaPostPreview = (postId) => {
+  for (const entry of plazaViewCache.values()) {
+    const post = entry?.data?.posts?.find((item) => item.id === postId);
+    if (post) return post;
+  }
+  return null;
+};
+const warmVisiblePlazaDetails = () => {
+  if (document.body.dataset.view !== 'plaza') return false;
+  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection || {};
+  if (connection.saveData || /(^|-)2g$/.test(connection.effectiveType || '')) return true;
+  const postIds = [...document.querySelectorAll('[data-post]')]
+    .slice(0, 4)
+    .map((card) => card.dataset.post)
+    .filter(Boolean);
+  if (!postIds.length) return false;
+  const run = () => postIds.forEach((postId, index) => {
+    const delay = index < 2 ? index * 40 : 220 + (index - 2) * 100;
+    setTimeout(() => { void loadPlazaPost(postId).catch(() => null); }, delay);
+  });
+  queueMicrotask(run);
+  return true;
+};
+const scheduleVisiblePlazaDetailWarmup = () => {
+  let attempt = 0;
+  const probe = () => {
+    attempt += 1;
+    if (warmVisiblePlazaDetails() || attempt >= 10) return;
+    setTimeout(probe, 120);
+  };
+  setTimeout(probe, 0);
+};
+const installPlazaDetailIntentPrefetch = () => {
+  if (document.documentElement.dataset.plazaDetailPrefetch === 'v2') return;
+  document.documentElement.dataset.plazaDetailPrefetch = 'v2';
+  const prefetch = (event) => {
+    if (document.body.dataset.view !== 'plaza') return;
+    const card = event.target?.closest?.('[data-post]');
+    const postId = card?.dataset?.post;
+    if (postId) void loadPlazaPost(postId).catch(() => null);
+  };
+  document.addEventListener('pointerdown', prefetch, { passive: true, capture: true });
+  document.addEventListener('pointerover', prefetch, { passive: true });
+  document.addEventListener('focusin', prefetch);
+  document.addEventListener('click', (event) => {
+    if (event.target?.closest?.('#plaza')) scheduleVisiblePlazaDetailWarmup();
+  }, { capture: true });
+};
+installPlazaDetailIntentPrefetch();
 const clearUserViewCaches = () => {
   plazaViewCache.clear();
+  plazaPostCache.clear();
+  plazaPostInflight.clear();
+  plazaPostCacheGeneration += 1;
   rankingViewCache.clear();
   countedPlazaViews.clear();
 };
@@ -93,6 +203,14 @@ const lazyImageObserver = 'IntersectionObserver' in window
   }, { rootMargin: '240px 0px' })
   : null;
 
+const preparePerfImage = (image) => {
+  const metric = image.dataset.perfImage;
+  if (!metric || image.dataset.perfBound) return;
+  image.dataset.perfBound = 'true';
+  const startedAt = performance.now();
+  image.addEventListener('load', () => { const flowDuration = photoFlowDuration(metric); recordPerf('image-visible', { metric, duration: roundedDuration(startedAt), flowDuration, bytesHint: Number(image.dataset.bytes || 0), cacheHint: performance.getEntriesByName(image.currentSrc || image.src).at(-1)?.transferSize === 0 ? 'warm' : 'cold' }); }, { once: true });
+  image.addEventListener('error', () => recordPerf('image-error', { metric, duration: roundedDuration(startedAt) }), { once: true });
+};
 const prepareDynamicContent = (container = app) => {
   container.querySelectorAll('table').forEach((table) => {
     if (table.dataset.mobileReady) return;
@@ -107,6 +225,7 @@ const prepareDynamicContent = (container = app) => {
   container.querySelectorAll('img').forEach((image) => {
     if (image.dataset.dynamicReady) return;
     image.dataset.dynamicReady = 'true';
+    preparePerfImage(image);
     image.loading = image.dataset.priority === 'high' ? 'eager' : 'lazy';
     image.decoding = 'async';
     image.fetchPriority = image.dataset.priority === 'high' ? 'high' : 'low';
@@ -134,6 +253,26 @@ window.addEventListener('popstate', () => {
   if (activeImageViewer) closeImageViewer(true);
 });
 
+const saveOriginalImage = async (url, alt = '活动原图') => {
+  const target = buildMediaUrl(url);
+  const embedded = /MicroMessenger|QQ\//i.test(navigator.userAgent);
+  if (embedded) {
+    window.open(target, '_blank', 'noopener');
+    showToast(/iPhone|iPad|iPod/i.test(navigator.userAgent) ? '已打开高清原图，请长按图片保存。' : '已打开高清原图，可长按或使用浏览器菜单保存。');
+    return;
+  }
+  const response = await fetch(target, { credentials: 'same-origin' });
+  if (!response.ok) throw new Error('原图下载失败，请稍后重试。');
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = `${String(alt || '活动原图').replace(/[^\w\u4e00-\u9fa5-]+/g, '-')}.webp`;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+};
 const openImageViewer = (thumbSrc, displaySrc, alt = '查看图片', renderedImage = null) => {
   if (activeImageViewer) closeImageViewer(true);
   const renderedThumb = renderedImage?.complete && renderedImage.naturalWidth
@@ -146,6 +285,7 @@ const openImageViewer = (thumbSrc, displaySrc, alt = '查看图片', renderedIma
   viewer.setAttribute('role', 'dialog');
   viewer.setAttribute('aria-modal', 'true');
   viewer.innerHTML = `
+    <div class="image-viewer-toolbar"><button type="button" class="secondary" data-image-close>关闭原图</button><button type="button" data-image-save>保存原图</button></div>
     <div class="image-viewer-stage" aria-label="单击返回上一层"><div class="image-shell"><img decoding="async" src="${escapeHtml(thumb)}" alt="${escapeHtml(alt)}"><button type="button" class="image-error" hidden>图片加载失败，点击重试</button></div></div>`;
   document.body.appendChild(viewer);
   activeImageViewer = viewer;
@@ -153,6 +293,13 @@ const openImageViewer = (thumbSrc, displaySrc, alt = '查看图片', renderedIma
   const stage = viewer.querySelector('.image-viewer-stage');
   const image = viewer.querySelector('img');
   const retry = viewer.querySelector('.image-error');
+  viewer.querySelector('[data-image-close]').onclick = (event) => { event.stopPropagation(); closeImageViewer(); };
+  viewer.querySelector('[data-image-save]').onclick = async (event) => {
+    event.stopPropagation();
+    const restore = beginButtonLoading(event.currentTarget, '处理中…');
+    try { await saveOriginalImage(display, alt); } catch (error) { alert(error.message); } finally { restore(); }
+  };
+  viewer.querySelector('.image-viewer-toolbar').onclick = (event) => event.stopPropagation();
   let manualRetryUsed = false;
   const markLoaded = () => {
     image.parentElement.classList.add('loaded');
@@ -492,13 +639,14 @@ const escapeHtml = (value) =>
   })[character]);
 
 const MEDIA_MAX_SOURCE_BYTES = 5 * 1024 * 1024;
-const MEDIA_THUMB_MAX_EDGE = 360;
+/* MOBILE_ADMIN_PHOTO_FIX_V1 */
+const MEDIA_THUMB_MAX_EDGE = 720;
 const MEDIA_PLAZA_THUMB_MAX_EDGE = 640;
 const MEDIA_DISPLAY_MAX_EDGE = 960;
-const MEDIA_THUMB_MAX_SIZE_MB = 0.12;
+const MEDIA_THUMB_MAX_SIZE_MB = 0.28;
 const MEDIA_PLAZA_THUMB_MAX_SIZE_MB = 0.18;
 const MEDIA_DISPLAY_MAX_SIZE_MB = 0.7;
-const MEDIA_THUMB_QUALITY = 0.72;
+const MEDIA_THUMB_QUALITY = 0.84;
 const MEDIA_PLAZA_THUMB_QUALITY = 0.84;
 const MEDIA_DISPLAY_QUALITY = 0.78;
 const MEMBER_FAST_MAX_BYTES = 307_200;
@@ -568,6 +716,250 @@ const imageDimensions = async (blob) => {
   } finally {
     URL.revokeObjectURL(url);
   }
+};
+
+/* PICA_IMAGE_PIPELINE_V1 */
+const IMAGE_PIPELINE_SCRIPT = '/vendor/image-blob-reduce-5.0.1.min.js';
+const PICA_DISPLAY_MAX_EDGE = 2048;
+const PICA_THUMB_MAX_EDGE = 960;
+const PICA_DISPLAY_MAX_BYTES = 1468006;
+const PICA_THUMB_MAX_BYTES = 491520;
+
+const loadImagePipelineLibrary = () => {
+  if (typeof window.imageBlobReduce === 'function') return Promise.resolve(window.imageBlobReduce);
+  if (imagePipelineLibraryPromise) return imagePipelineLibraryPromise;
+  imagePipelineLibraryPromise = new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-image-pipeline-library]');
+    const script = existing || document.createElement('script');
+    const handleLoad = () => {
+      if (typeof window.imageBlobReduce === 'function') resolve(window.imageBlobReduce);
+      else reject(new Error('高清图片处理组件加载失败，请刷新后重试。'));
+    };
+    const handleError = () => reject(new Error('高清图片处理组件加载失败，请刷新后重试。'));
+    script.addEventListener('load', handleLoad, { once: true });
+    script.addEventListener('error', handleError, { once: true });
+    if (!existing) {
+      script.src = IMAGE_PIPELINE_SCRIPT;
+      script.async = true;
+      script.dataset.imagePipelineLibrary = 'true';
+      document.head.appendChild(script);
+    }
+  }).catch((error) => {
+    imagePipelineLibraryPromise = null;
+    throw error;
+  });
+  return imagePipelineLibraryPromise;
+};
+
+const getImagePipeline = async () => {
+  if (imagePipelineInstance) return imagePipelineInstance;
+  const factory = await loadImagePipelineLibrary();
+  const pica = factory.pica({ tile: 1024, concurrency: 1 });
+  const reducer = factory({ pica });
+  imagePipelineInstance = { pica, reducer };
+  return imagePipelineInstance;
+};
+
+const createPipelineCanvas = (width, height) => {
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(width));
+  canvas.height = Math.max(1, Math.round(height));
+  return canvas;
+};
+
+const releasePipelineCanvas = (canvas) => {
+  if (!canvas) return;
+  canvas.width = 1;
+  canvas.height = 1;
+};
+
+const browserSupportsWebp = (() => {
+  try {
+    const canvas = createPipelineCanvas(1, 1);
+    const supported = canvas.toDataURL('image/webp').startsWith('data:image/webp');
+    releasePipelineCanvas(canvas);
+    return supported;
+  } catch {
+    return false;
+  }
+})();
+
+const encodePipelineCanvas = async (pica, canvas, profile) => {
+  let mimeType = browserSupportsWebp ? 'image/webp' : 'image/jpeg';
+  let blob = await pica.toBlob(canvas, mimeType, profile.quality);
+  let header = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
+  if (!bytesMatchMime(header, mimeType)) {
+    mimeType = 'image/jpeg';
+    blob = await pica.toBlob(canvas, mimeType, profile.quality);
+    header = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
+  }
+  if (!bytesMatchMime(header, mimeType)) throw new Error('当前浏览器无法稳定编码图片，请改用JPG后重试。');
+  if (blob.size > profile.maxBytes) {
+    blob = await pica.toBlob(canvas, mimeType, profile.fallbackQuality);
+  }
+  if (!blob?.size || blob.size > 1.5 * 1024 * 1024) {
+    throw new Error('图片处理后仍然过大，请在相册中裁剪后重新上传。');
+  }
+  const extension = mimeType === 'image/webp' ? 'webp' : 'jpg';
+  const file = new File([blob], `${profile.baseName}-${profile.suffix}.${extension}`, {
+    type: mimeType,
+    lastModified: Date.now()
+  });
+  return {
+    file,
+    mimeType,
+    width: canvas.width,
+    height: canvas.height
+  };
+};
+
+const prepareImageVariants = async (file, options = {}) => {
+  const sourceFile = await normalizeSourceImage(file);
+  if (options.signal?.aborted) throw new DOMException('操作已取消', 'AbortError');
+  options.onProgress?.(5);
+  const { pica, reducer } = await getImagePipeline();
+  const screenshotLike = sourceFile.type === 'image/png';
+  let masterCanvas = null;
+  let thumbCanvas = null;
+  let smallerDisplayCanvas = null;
+  try {
+    masterCanvas = await reducer.toCanvas(sourceFile, {
+      max: PICA_DISPLAY_MAX_EDGE,
+      filter: 'mks2013'
+    });
+    if (options.signal?.aborted) throw new DOMException('操作已取消', 'AbortError');
+    options.onProgress?.(45);
+
+    const thumbScale = Math.min(1, PICA_THUMB_MAX_EDGE / Math.max(masterCanvas.width, masterCanvas.height));
+    if (thumbScale < 1) {
+      thumbCanvas = createPipelineCanvas(masterCanvas.width * thumbScale, masterCanvas.height * thumbScale);
+      await pica.resize(masterCanvas, thumbCanvas, { filter: 'mks2013' });
+    } else {
+      thumbCanvas = masterCanvas;
+    }
+    options.onProgress?.(65);
+
+    const baseName = sourceFile.name.replace(/\.[^.]+$/, '') || 'image';
+    let displayCanvas = masterCanvas;
+    let display = await encodePipelineCanvas(pica, displayCanvas, {
+      baseName,
+      suffix: 'display',
+      quality: screenshotLike ? 0.94 : 0.90,
+      fallbackQuality: screenshotLike ? 0.90 : 0.86,
+      maxBytes: PICA_DISPLAY_MAX_BYTES
+    });
+
+    if (display.file.size > PICA_DISPLAY_MAX_BYTES
+        && Math.max(masterCanvas.width, masterCanvas.height) > 1600) {
+      const scale = 1600 / Math.max(masterCanvas.width, masterCanvas.height);
+      smallerDisplayCanvas = createPipelineCanvas(masterCanvas.width * scale, masterCanvas.height * scale);
+      await pica.resize(masterCanvas, smallerDisplayCanvas, { filter: 'mks2013' });
+      displayCanvas = smallerDisplayCanvas;
+      display = await encodePipelineCanvas(pica, displayCanvas, {
+        baseName,
+        suffix: 'display',
+        quality: screenshotLike ? 0.91 : 0.87,
+        fallbackQuality: screenshotLike ? 0.88 : 0.84,
+        maxBytes: PICA_DISPLAY_MAX_BYTES
+      });
+    }
+
+    const thumb = await encodePipelineCanvas(pica, thumbCanvas, {
+      baseName,
+      suffix: 'thumb',
+      quality: screenshotLike ? 0.92 : 0.88,
+      fallbackQuality: screenshotLike ? 0.89 : 0.84,
+      maxBytes: PICA_THUMB_MAX_BYTES
+    });
+    const previewUrl = URL.createObjectURL(display.file);
+    mediaPreviewUrls.add(previewUrl);
+    display.previewUrl = previewUrl;
+    options.onProgress?.(100);
+    return { display, thumb };
+  } finally {
+    if (thumbCanvas && thumbCanvas !== masterCanvas) releasePipelineCanvas(thumbCanvas);
+    if (smallerDisplayCanvas) releasePipelineCanvas(smallerDisplayCanvas);
+    releasePipelineCanvas(masterCanvas);
+  }
+};
+
+const prepareImageVariantsMeasured = async (file, options = {}) => {
+  const startedAt = performance.now();
+  let output = null;
+  try {
+    output = await prepareImageVariants(file, options);
+    return output;
+  } finally {
+    recordPerf('compress', {
+      variant: 'display+thumb',
+      sourceBytes: Number(file?.size || 0),
+      outputBytes: Number(output?.display?.file?.size || 0) + Number(output?.thumb?.file?.size || 0),
+      duration: roundedDuration(startedAt),
+      navigationEpoch
+    });
+  }
+};
+
+const requestVariantUploadIntent = (image, context, variant, signal) => api('/api/media/upload-intents', {
+  method: 'POST',
+  signal,
+  body: JSON.stringify({
+    taskId: context.taskId || null,
+    businessType: context.businessType,
+    mimeType: image.mimeType,
+    fileSize: image.file.size,
+    width: image.width,
+    height: image.height,
+    variant
+  })
+});
+
+const putVariantToR2 = async (intent, image, signal) => {
+  const response = await uploadBinary(intent.uploadUrl, {
+    method: 'PUT',
+    headers: intent.headers,
+    body: image.file,
+    signal
+  });
+  if (!response.ok) throw new Error(`图片直传失败（${response.status}），请重新选择图片。`);
+};
+
+const confirmVariantUpload = async (intent, image, parentMediaId, signal) => {
+  const confirmed = await api(`/api/media/upload-intents/${encodeURIComponent(intent.intentId)}/confirm`, {
+    method: 'POST',
+    signal,
+    body: JSON.stringify({ parentMediaId: parentMediaId || null })
+  });
+  return { ...image, mediaId: confirmed.media.id };
+};
+
+const uploadPreparedImagePair = async (prepared, context, signal) => {
+  const startedAt = performance.now();
+  context.onStage?.('正在同时申请高清图和列表图上传地址…');
+  const [displayIntent, thumbIntent] = await Promise.all([
+    requestVariantUploadIntent(prepared.display, context, 'display', signal),
+    requestVariantUploadIntent(prepared.thumb, context, 'thumb', signal)
+  ]);
+
+  context.onStage?.('正在并行上传高清图和列表图…');
+  const displayPut = putVariantToR2(displayIntent, prepared.display, signal);
+  const thumbPut = putVariantToR2(thumbIntent, prepared.thumb, signal);
+
+  await displayPut;
+  context.onStage?.('正在确认高清图…');
+  const display = await confirmVariantUpload(displayIntent, prepared.display, null, signal);
+
+  await thumbPut;
+  context.onStage?.('正在确认列表图…');
+  const thumb = await confirmVariantUpload(thumbIntent, prepared.thumb, display.mediaId, signal);
+
+  recordPerf('upload-pair', {
+    displayBytes: Number(prepared.display?.file?.size || 0),
+    thumbBytes: Number(prepared.thumb?.file?.size || 0),
+    duration: roundedDuration(startedAt),
+    navigationEpoch
+  });
+  return { display, thumb };
 };
 
 const compressImage = async (file, options = {}) => {
@@ -641,6 +1033,14 @@ const compressImageMeasured = async (file, options = {}) => {
 
 const compressMemberCheckinImage = async (file, options = {}) => {
   const sourceFile = await normalizeSourceImage(file);
+  const sourceDimensions = await imageDimensions(sourceFile);
+  if (['image/jpeg', 'image/webp'].includes(sourceFile.type)
+      && sourceFile.size <= MEMBER_FAST_MAX_BYTES
+      && sourceDimensions.width > 0 && sourceDimensions.height > 0
+      && Math.max(sourceDimensions.width, sourceDimensions.height) <= MEMBER_FAST_MAX_EDGE) {
+    recordPerf('member-checkin-direct-ready', { sourceBytes: Number(sourceFile.size || 0), navigationEpoch });
+    return { file: sourceFile, mimeType: sourceFile.type, width: sourceDimensions.width, height: sourceDimensions.height };
+  }
   const imageCompression = await loadImageCompressionLibrary();
   const webpRounds = [
     { maxWidthOrHeight: 960, initialQuality: 0.76, maxSizeMB: 0.25 },
@@ -840,39 +1240,24 @@ const createMediaUploadSession = (files, context = {}, ui = {}) => {
     if (session.results[index]) return;
     const position = `第 ${index + 1}/${selected.length} 张`;
     try {
-      let display = session.partial[index]?.display;
-      if (!display) {
-        setStatus(`${position}：正在压缩 0%`);
-        const compressed = await compressImageMeasured(selected[index], {
+      let prepared = session.partial[index]?.prepared;
+      if (!prepared) {
+        setStatus(`${position}：正在生成高清图和列表图 0%`);
+        prepared = await prepareImageVariantsMeasured(selected[index], {
           signal: controller.signal,
-          variant: 'display',
-          onProgress: (progress) => {
-            const percent = Number(progress);
-            if (Number.isFinite(percent)) {
-              setStatus(`${position}：正在压缩 ${Math.max(0, Math.min(100, Math.round(percent)))}%`);
-            }
-          }
+          onProgress: (progress) => setStatus(`${position}：正在生成高清图和列表图 ${Math.round(Number(progress) || 0)}%`)
         });
-        display = await uploadCompressedImage(compressed, {
+        session.partial[index] = { prepared };
+      }
+      let pair = session.partial[index]?.pair;
+      if (!pair) {
+        pair = await uploadPreparedImagePair(prepared, {
           ...context,
-          variant: 'display',
           onStage: (stage) => setStatus(`${position}：${stage}`)
         }, controller.signal);
-        session.partial[index] = { display };
+        session.partial[index] = { prepared, pair };
       }
-      setStatus(`${position}：正在生成列表图片…`);
-      const thumbCompressed = await compressImageMeasured(display.file, {
-        signal: controller.signal,
-        variant: 'thumb',
-        plazaThumb: context.businessType === 'task'
-      });
-      const thumb = await uploadCompressedImage(thumbCompressed, {
-        ...context,
-        variant: 'thumb',
-        parentMediaId: display.mediaId,
-        onStage: (stage) => setStatus(`${position}：${stage}`)
-      }, controller.signal);
-      session.results[index] = { ...display, thumbMediaId: thumb.mediaId };
+      session.results[index] = { ...pair.display, thumbMediaId: pair.thumb.mediaId };
       session.errors.delete(index);
     } catch (error) {
       if (!controller.signal.aborted) session.errors.set(index, error);
@@ -1142,10 +1527,21 @@ async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
   tracks = dashboard.tracks;
   user = dashboard.user;
   try { localStorage.user = JSON.stringify(user); } catch {}
+  /* STRICT_P95_APP_PREFETCH_V4 */
+  /* MOBILE_REAL_UNDER_1S_V5 */
+  const startPlazaPrefetch = () => { void prefetchStudentPlaza(); };
+  // Start the lightweight Plaza request alongside home rendering so an immediate tap reuses it.
+  void startPlazaPrefetch();
+  setTimeout(() => {
+    const memberUploadWarmup = () => { void loadImageCompressionLibrary().catch(() => {}); };
+    if ('requestIdleCallback' in window) requestIdleCallback(memberUploadWarmup, { timeout: 700 });
+    else memberUploadWarmup();
+  }, 1100);
   const isInteraction = user.trackId === 'interaction';
   const teamListResult = dashboard.teamSummary;
   const myTeam = dashboard.teamSummary?.team;
   const taskResult = { tasks: dashboard.tasks };
+  const checkinStats = dashboard.checkinStats || { personalDays: 0, teamDays: 0 };
   const materialResult = { tasks: dashboard.materialTasks };
   const completedTasks = taskResult.tasks.filter((task) =>
     ['submitted', 'approved'].includes(task.submission?.status) || task.memberCheckin
@@ -1166,14 +1562,13 @@ async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
     <section class="student-user-card">
       <div class="student-avatar" aria-hidden="true">${escapeHtml(avatarText)}</div>
       <div class="student-user-copy"><span>欢迎回来</span><h2>${escapeHtml(user.name)}</h2><p>${escapeHtml(trackName(user.trackId))} · ${escapeHtml(user.campus)}</p></div>
-      <div class="student-progress" style="--progress:${taskProgress}%"><strong>${taskProgress}%</strong><span>任务进度</span></div>
+      <div class="student-progress student-checkin-total"><strong>${Number(checkinStats.personalDays || 0)}天</strong><span>个人累计打卡</span></div>
     </section>
-    <nav class="student-shortcuts" aria-label="常用功能">
-      <button data-jump="activityTasks"><span>✦</span><strong>今日任务</strong><small>${taskResult.tasks.length} 项待查看</small></button>
-      <button id="historyCheckins"><span>✓</span><strong>历史打卡</strong><small>查看以前的提交</small></button>
-      <button id="plaza"><span>▦</span><strong>活动广场</strong><small>发现青春作品</small></button>
-      <button data-jump="myTeam" ${isInteraction ? '' : 'disabled'}><span>♢</span><strong>我的队伍</strong><small>${isInteraction ? (myTeam ? escapeHtml(myTeam.name) : '等待编队') : '仅互动赛道'}</small></button>
-      <button id="inbox"><span>✉</span><strong>信息箱</strong><small>评论与系统通知</small></button>
+    <nav class="student-shortcuts student-shortcuts-compact student-shortcuts-four" aria-label="常用功能">
+      <button id="historyCheckins"><span>✓</span><strong>个人累计</strong><small>${Number(checkinStats.personalDays || 0)}天 · 查看</small></button>
+      <button id="plaza"><span>▦</span><strong>活动广场</strong><small>查看作品</small></button>
+      <button id="inbox"><span>✉</span><strong>信息箱</strong><small>通知评论</small></button>
+      <button id="teamCheckinStats"><span>◇</span><strong>队伍累计</strong><small>${dashboard.teamSummary?.team ? `${Number(checkinStats.teamDays || 0)}天 · 查看` : '未加入'}</small></button>
     </nav>
     <div class="student-top-actions">
       <button class="secondary" id="ranking">查看排行榜</button>
@@ -1207,7 +1602,8 @@ async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
         ` : `
           <p class="muted">你尚未被编入队伍。队伍由管理员统一导入和调整，请联系活动管理员。</p>`}
       </section>
-      ` : ''}`;
+      ` : ''}
+    <div id="modalRoot"></div>`;
   const mealNames = { breakfast: '早餐', lunch: '午餐', dinner: '晚餐' };
   const submissionNames = { draft: '草稿', submitted: '已提交', returned: '退回', approved: '通过' };
   const taskCards = taskResult.tasks.map((task) => `
@@ -1215,7 +1611,7 @@ async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
       <span class="task-kicker">${isInteraction ? '团队活动' : '个人活动'}</span>
       <div class="row"><h2>${escapeHtml(task.name)}</h2><span class="pill ${task.submission?.status === 'approved' ? 'done' : 'pending'}">${submissionNames[task.submission?.status] || '未提交'}</span></div>
       <p>${escapeHtml(task.description)}</p>
-      <p class="task-requirement">${task.scheduleType === 'activityDays' ? `${escapeHtml(task.occurrenceDate)} 当天 ${task.dailyStart}–${task.dailyEnd} · 活动第 ${task.refreshDays.join('、')} 天自动刷新` : task.scheduleType === 'weekly' ? `${escapeHtml(task.occurrenceDate)} 当天 ${task.dailyStart}–${task.dailyEnd} · 周${task.weekdays.join('、周')}自动刷新` : `${formatDate(task.startAt)} 至 ${formatDate(task.endAt)}`} · 最多 ${task.imageLimit} 张图 · ${task.allowLate ? '允许补交' : '不允许补交'}</p>
+      <p class="task-requirement">${task.scheduleType === 'activityDays' ? `${escapeHtml(task.occurrenceDate)} 当天 ${task.dailyStart}–${task.dailyEnd} · 活动第 ${task.refreshDays.join('、')} 天自动刷新` : task.scheduleType === 'weekly' ? `${escapeHtml(task.occurrenceDate)} 当天 ${task.dailyStart}–${task.dailyEnd} · 周${task.weekdays.join('、周')}自动刷新` : `${formatDate(task.startAt)} 至 ${formatDate(task.endAt)}`} · ${isInteraction ? `个人最多 ${task.memberImageLimit || task.imageLimit} 张 · 队伍汇总最多 ${task.imageLimit} 张` : `最多 ${task.imageLimit} 张图`} · ${task.allowLate ? '允许补交' : '不允许补交'}</p>
       ${task.copyRequirement ? `<div class="notice">文案要求：${escapeHtml(task.copyRequirement)}</div>` : ''}
       ${task.submission?.reviewNote ? `<p class="bad">审核意见：${escapeHtml(task.submission.reviewNote)}</p>` : ''}
       ${isInteraction ? `
@@ -1224,7 +1620,7 @@ async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
           <div class="member-list compact">${(task.teamProgress?.members || []).map((member) => `<span class="${member.checked ? 'checked-member' : ''}">${escapeHtml(member.name)} · ${escapeHtml(member.studentId)} ${member.checked ? '✓ 已打卡' : '未打卡'}</span>`).join('')}</div>
         </div>
         <button data-member-task="${task.id}" ${task.availabilityError ? 'disabled' : ''}>${task.memberCheckin ? '更新个人打卡' : '个人打卡'}</button>
-        ${task.isCaptain ? `<button class="secondary" data-task="${task.id}" ${task.availabilityError || ['submitted','approved'].includes(task.submission?.status) ? 'disabled' : ''}>${task.submission ? '继续编辑队伍作品' : '队长汇总提交'}</button>` : '<p class="muted">队伍作品由管理员指定的队长汇总提交。</p>'}
+        ${task.isCaptain ? `<button class="secondary" data-task="${task.id}" ${task.availabilityError || Number(task.teamProgress?.total || 0) === 0 || Number(task.teamProgress?.completed || 0) < Number(task.teamProgress?.total || 0) || ['submitted','approved'].includes(task.submission?.status) ? 'disabled' : ''}>${task.submission ? '继续编辑队伍作品' : '队长汇总提交'}</button>${Number(task.teamProgress?.total || 0) > 0 && Number(task.teamProgress?.completed || 0) < Number(task.teamProgress?.total || 0) ? '<p class="bad">所有队员完成当天个人打卡后，队长才能汇总提交。</p>' : ''}` : '<p class="muted">队伍作品由管理员指定的队长汇总提交。</p>'}
       ` : `<button data-task="${task.id}" ${task.availabilityError || ['submitted','approved'].includes(task.submission?.status) ? 'disabled' : ''}>${task.submission ? '继续编辑' : '个人打卡'}</button>`}
       ${task.availabilityError ? `<p class="bad">${escapeHtml(task.availabilityError)}</p>` : ''}
     </article>`).join('');
@@ -1249,10 +1645,11 @@ async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
     navigationEpoch: pageEpoch
   });
   document.querySelector('#out').onclick = logout;
-  document.querySelector('#historyCheckins').onclick = () => openStudentCheckinHistory();
+  document.querySelector('#historyCheckins').onclick = () => { startPhotoFlow('history'); openStudentCheckinHistory(); };
   document.querySelector('#ranking').onclick = () => rankings();
-  document.querySelector('#plaza').onclick = () => plaza();
+  document.querySelector('#plaza').onclick = () => { startPhotoFlow('plaza'); plaza(); };
   document.querySelector('#inbox').onclick = () => inbox();
+  document.querySelector('#teamCheckinStats').onclick = () => void openTeamCheckinHistory();
   if (document.querySelector('#createAdmin')) {
     document.querySelector('#createAdmin').onsubmit = async (event) => {
       event.preventDefault();
@@ -1286,37 +1683,25 @@ async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
   document.querySelectorAll('[data-member-task]').forEach((button) => {
     button.onclick = () => memberCheckinForm(taskResult.tasks.find((task) => task.id === button.dataset.memberTask));
   });
-  document.querySelectorAll('[data-material]').forEach((button) => {
-    button.onclick = () => materialSubmissionForm(materialResult.tasks.find((task) => task.id === button.dataset.material));
-  });
-  document.querySelectorAll('.material-download').forEach((button) => {
-    button.onclick = () => downloadProtectedFile(button.dataset.url, button.dataset.name).catch((error) => alert(error.message));
-  });
-  clearTimeout(midnightRefreshTimer);
-  const nextMidnight = new Date();
-  nextMidnight.setHours(24, 0, 2, 0);
-  midnightRefreshTimer = setTimeout(() => {
-    studentDashboardDirty = true;
-    studentViewState.dirty = true;
-    if (document.querySelector('#activityTasks')) void home({ showShell: false });
-  }, Math.max(1000, nextMidnight.getTime() - Date.now()));
-  if (options.restoreScroll) {
-    requestAnimationFrame(() => window.scrollTo(0, studentViewState.scrollY));
-  }
 }
 
 function openStudentCheckinHistory() {
-  const root = document.querySelector('#modalRoot');
+  let root = document.querySelector('#modalRoot');
+  if (!root) {
+    root = document.createElement('div');
+    root.id = 'modalRoot';
+    app.append(root);
+  }
   let page = 1;
   let loading = false;
   root.innerHTML = `<div class="drawer-backdrop" id="historyDrawerBackdrop">
     <section class="bottom-drawer history-drawer" role="dialog" aria-modal="true" aria-labelledby="historyDrawerTitle">
       <div class="drawer-handle" aria-hidden="true"></div>
       <div class="drawer-sticky-header row">
-        <div><small class="muted">我的记录</small><h2 id="historyDrawerTitle">历史打卡</h2></div>
+        <div><small class="muted">我的记录</small><h2 id="historyDrawerTitle">个人累计打卡</h2></div>
         <button class="secondary right" id="closeHistoryDrawer">关闭</button>
       </div>
-      <div id="studentHistoryList"><p class="muted">正在读取历史打卡…</p></div>
+      <div id="studentHistoryList"><p class="muted">正在读取个人打卡记录…</p></div>
       <button class="secondary full-width" id="moreStudentHistory" hidden>加载更多</button>
     </section>
   </div>`;
@@ -1327,30 +1712,24 @@ function openStudentCheckinHistory() {
   root.querySelector('#historyDrawerBackdrop').onclick = (event) => {
     if (event.target.id === 'historyDrawerBackdrop') close();
   };
-
   const renderRecord = (record) => {
     const title = record.taskName || config.slots.find((slot) => slot.id === record.slotId)?.label || '打卡';
     const status = {
-      pending: '待审核',
-      submitted: '已提交',
-      approved: '已通过',
-      rejected: '已退回',
-      returned: '退回修改'
+      pending: '待审核', submitted: '已提交', approved: '已通过',
+      rejected: '已退回', returned: '退回修改'
     }[record.status] || record.status;
     const images = (record.images || []).map((media, index) => {
       const thumbUrl = typeof media === 'string' ? media : media.thumbUrl || media.imageUrl;
       const displayUrl = typeof media === 'string' ? media : media.displayUrl || thumbUrl;
-      return `
-      <button class="image-viewer-trigger" data-image-viewer="${escapeHtml(thumbUrl)}"
+      return `<button class="image-viewer-trigger" data-image-viewer="${escapeHtml(thumbUrl)}"
         data-image-thumb="${escapeHtml(thumbUrl)}" data-image-display="${escapeHtml(displayUrl)}"
         data-image-alt="${escapeHtml(title)}图片">
-        <span class="image-shell"><img data-src="${escapeHtml(thumbUrl)}" loading="${index ? 'lazy' : 'eager'}"
-          width="480" height="360" fetchpriority="${index ? 'low' : 'high'}"
-          decoding="async" alt="${escapeHtml(title)}图片"
+        <span class="image-shell"><img data-perf-image="history-thumb" data-priority="${index ? 'low' : 'high'}"
+          data-src="${escapeHtml(thumbUrl)}" loading="${index ? 'lazy' : 'eager'}" width="720" height="540"
+          fetchpriority="${index ? 'low' : 'high'}" decoding="async" alt="${escapeHtml(title)}图片"
           onload="this.parentElement.classList.add('loaded')"
           onerror="this.hidden=true;this.parentElement.classList.add('failed')">
-          <span class="image-error">图片加载失败，点击重试</span></span>
-      </button>`;
+          <span class="image-error">图片加载失败，点击重试</span></span></button>`;
     }).join('');
     return `<article class="history-checkin-card">
       <div class="row"><div><strong>${escapeHtml(title)}</strong><small>${escapeHtml(record.date)}</small></div>
@@ -1361,7 +1740,6 @@ function openStudentCheckinHistory() {
       ${record.reviewNote ? `<p class="bad">审核说明：${escapeHtml(record.reviewNote)}</p>` : ''}
     </article>`;
   };
-
   const load = async () => {
     if (loading) return;
     loading = true;
@@ -1369,10 +1747,9 @@ function openStudentCheckinHistory() {
     try {
       const result = await api(`/api/checkins/history?page=${page}&limit=20`);
       if (page === 1) list.innerHTML = '';
-      list.insertAdjacentHTML('beforeend', result.records.map(renderRecord).join(''));
-      if (!result.records.length && page === 1) {
-        list.innerHTML = '<p class="muted">暂无历史打卡记录</p>';
-      }
+      const records = Array.isArray(result.records) ? result.records : [];
+      list.insertAdjacentHTML('beforeend', records.map(renderRecord).join(''));
+      if (!records.length && page === 1) list.innerHTML = '<p class="muted">暂无历史打卡记录</p>';
       const loaded = Math.min(result.total, page * result.limit);
       prepareDynamicContent(list);
       more.hidden = loaded >= result.total;
@@ -1391,19 +1768,100 @@ function openStudentCheckinHistory() {
   void load();
 }
 
+function openTeamCheckinHistory() {
+  const root = document.querySelector('#modalRoot');
+  if (!root) return;
+  let page = 1;
+  let loading = false;
+  root.innerHTML = `<div class="drawer-backdrop" id="teamHistoryDrawerBackdrop">
+    <section class="bottom-drawer history-drawer" role="dialog" aria-modal="true" aria-labelledby="teamHistoryDrawerTitle">
+      <div class="drawer-handle" aria-hidden="true"></div>
+      <div class="drawer-sticky-header row">
+        <div><small class="muted">队伍记录</small><h2 id="teamHistoryDrawerTitle">队伍累计打卡</h2></div>
+        <button class="secondary right" id="closeTeamHistoryDrawer">关闭</button>
+      </div>
+      <div id="teamHistoryList"><p class="muted">正在读取队伍打卡记录…</p></div>
+      <button class="secondary full-width" id="moreTeamHistory" hidden>加载更多</button>
+    </section>
+  </div>`;
+  const list = root.querySelector('#teamHistoryList');
+  const more = root.querySelector('#moreTeamHistory');
+  const close = () => { root.innerHTML = ''; };
+  root.querySelector('#closeTeamHistoryDrawer').onclick = close;
+  root.querySelector('#teamHistoryDrawerBackdrop').onclick = (event) => {
+    if (event.target.id === 'teamHistoryDrawerBackdrop') close();
+  };
+
+  const renderRecord = (record) => {
+    const images = (record.images || []).map((media, index) => {
+      const thumbUrl = media.thumbUrl || media.imageUrl || media.displayUrl || '';
+      const displayUrl = media.displayUrl || thumbUrl;
+      return `<button class="image-viewer-trigger" data-image-viewer="${escapeHtml(thumbUrl)}"
+        data-image-thumb="${escapeHtml(thumbUrl)}" data-image-display="${escapeHtml(displayUrl)}"
+        data-image-alt="${escapeHtml(record.taskName || '队伍打卡')}图片">
+        <span class="image-shell"><img data-perf-image="history-thumb" data-priority="${index ? 'low' : 'high'}"
+          data-src="${escapeHtml(thumbUrl)}" loading="${index ? 'lazy' : 'eager'}" width="720" height="540"
+          fetchpriority="${index ? 'low' : 'high'}" decoding="async" alt="${escapeHtml(record.taskName || '队伍打卡')}图片"
+          onload="this.parentElement.classList.add('loaded')"
+          onerror="this.hidden=true;this.parentElement.classList.add('failed')">
+          <span class="image-error">图片加载失败，点击重试</span></span></button>`;
+    }).join('');
+    const members = (record.teamProgress?.members || []).map((member) =>
+      `<span class="${member.checked ? 'checked-member' : ''}">${escapeHtml(member.name)} ${member.checked ? '✓' : '未完成'}</span>`
+    ).join('');
+    return `<article class="history-checkin-card">
+      <div class="row"><div><strong>${escapeHtml(record.taskName || '队伍打卡')}</strong><small>${escapeHtml(record.date || '')}</small></div>
+        <span class="pill done">已提交</span></div>
+      <p class="muted">${escapeHtml(formatDate(record.submittedAt))}</p>
+      <div class="team-progress compact"><div class="row"><strong>成员完成情况</strong><span class="right">${Number(record.teamProgress?.completed || 0)}/${Number(record.teamProgress?.total || 0)}</span></div>
+        <div class="member-list compact">${members || '<span>暂无成员数据</span>'}</div></div>
+      ${images ? `<div class="drawer-photo-grid compact">${images}</div>` : ''}
+      ${record.copy ? `<p>${escapeHtml(record.copy)}</p>` : ''}
+    </article>`;
+  };
+
+  const load = async () => {
+    if (loading) return;
+    loading = true;
+    more.disabled = true;
+    try {
+      const result = await api(`/api/team-checkins/history?page=${page}&limit=20`);
+      if (page === 1) list.innerHTML = '';
+      list.insertAdjacentHTML('beforeend', (result.records || []).map(renderRecord).join(''));
+      if (!(result.records || []).length && page === 1) list.innerHTML = '<p class="muted">暂无队伍打卡记录</p>';
+      const loaded = Math.min(Number(result.total || 0), page * Number(result.limit || 20));
+      prepareDynamicContent(list);
+      more.hidden = loaded >= Number(result.total || 0);
+      more.textContent = `加载更多（${loaded}/${Number(result.total || 0)}）`;
+      page += 1;
+    } catch (error) {
+      if (page === 1) list.innerHTML = `<p class="bad">${escapeHtml(error.message)}</p>`;
+      more.hidden = false;
+      more.textContent = '读取失败，点击重试';
+    } finally {
+      loading = false;
+      more.disabled = false;
+    }
+  };
+  more.onclick = load;
+  void load();
+}
+
 function memberCheckinForm(task) {
   beginNavigation();
   void loadImageCompressionLibrary().catch(() => {});
+  const maxImages = Math.max(1, Math.min(8,
+    Number(task.memberImageLimit || task.imageLimit) || 1));
   app.innerHTML = `<header class="hero"><h1>个人打卡</h1><p>${escapeHtml(task.name)}</p></header>
     <section class="card"><form id="memberSend">
       <div class="notice">姓名和学号由账号自动带入，请上传本人当天截图。</div>
       <label>姓名</label><input value="${escapeHtml(user.name)}" readonly>
       <label>学号</label><input value="${escapeHtml(user.studentId)}" readonly>
       <label>校区</label><input value="${escapeHtml(user.campus)}" readonly>
-      <label>图片</label><input name="images" type="file" accept="image/jpeg,image/png,image/webp" required>
+      <label>图片（最多 ${maxImages} 张）</label><input name="images" type="file" accept="image/jpeg,image/png,image/webp" multiple required>
       <div class="image-preview" id="memberPreview"></div>
-      <p class="muted" id="memberUploadStatus">选择图片后会立即压缩并上传，图片就绪后才能确定打卡。</p>
-      <button type="button" class="secondary" id="retryMemberUpload" hidden>重试上传</button>
+      <p class="muted" id="memberUploadStatus">可选择 1–${maxImages} 张图片，选择后会立即预览并上传。</p>
+      <button type="button" class="secondary" id="retryMemberUpload" hidden>重试失败图片</button>
       <div class="row"><button type="button" class="secondary" id="backMember">返回</button><button>确定打卡</button></div>
     </form></section>`;
   const form = document.querySelector('#memberSend');
@@ -1415,133 +1873,158 @@ function memberCheckinForm(task) {
 
   const releaseSession = () => {
     session?.controller?.abort();
-    if (session?.previewUrl) {
-      URL.revokeObjectURL(session.previewUrl);
-      mediaPreviewUrls.delete(session.previewUrl);
-    }
+    session?.items?.forEach((item) => {
+      if (!item.previewUrl) return;
+      URL.revokeObjectURL(item.previewUrl);
+      mediaPreviewUrls.delete(item.previewUrl);
+    });
     session = null;
     form._media = null;
   };
+
+  const readyCount = () => session?.items?.filter((item) => item.mediaId).length || 0;
+  const failedItems = () => session?.items?.filter((item) => item.error && !item.uploadPromise) || [];
   const updateReadyState = () => {
-    submitButton.disabled = !session?.compressed && !session?.mediaId;
-    submitButton.textContent = session?.uploadPromise ? '图片上传中' : '确定打卡';
-    retryButton.hidden = !session?.compressed || Boolean(session?.mediaId) || Boolean(session?.uploadPromise);
+    const total = session?.items?.length || 0;
+    const ready = readyCount();
+    const uploading = Boolean(session?.processingPromise) || Boolean(session?.items?.some((item) => item.uploadPromise));
+    submitButton.disabled = !total || ready !== total || uploading;
+    submitButton.textContent = uploading ? `图片上传中（${ready}/${total}）` : '确定打卡';
+    retryButton.hidden = !failedItems().length || uploading;
   };
-  const uploadCurrentSession = async (current) => {
-    if (!current?.compressed || current !== session) return null;
-    status.textContent = '正在上传图片…';
-    retryButton.hidden = true;
-    const uploadPromise = uploadMemberCheckinFast(
-      current.compressed,
-      task.id,
-      current.idempotencyKey,
-      current.controller.signal
-    );
-    current.uploadPromise = uploadPromise;
+
+  const updateStatus = () => {
+    if (!session) return;
+    const ready = readyCount();
+    const failed = failedItems().length;
+    const total = session.items.length;
+    if (failed) status.textContent = `已有 ${ready}/${total} 张就绪，${failed} 张失败，可点击重试。`;
+    else if (ready === total) status.textContent = `${total} 张图片已就绪。`;
+    else status.textContent = `正在处理图片（${ready}/${total}）…`;
     updateReadyState();
+  };
+
+  const processItem = async (current, item, index) => {
+    if (current !== session || current.controller.signal.aborted) return;
+    item.error = null;
+    status.textContent = `第 ${index + 1}/${current.items.length} 张：正在压缩…`;
     try {
-      const uploaded = await uploadPromise;
-      if (current !== session) return null;
-      current.mediaId = uploaded.mediaId;
-      form._media = uploaded;
-      status.textContent = '图片已就绪';
-      return uploaded;
+      const sourceFile = await normalizeSourceImage(item.file);
+      if (current !== session) return;
+      item.compressed = await compressMemberCheckinImage(sourceFile, {
+        signal: current.controller.signal,
+        onProgress: (progress) => {
+          if (current !== session) return;
+          const percent = Math.max(0, Math.min(100, Math.round(Number(progress) || 0)));
+          status.textContent = `第 ${index + 1}/${current.items.length} 张：正在压缩 ${percent}%`;
+        }
+      });
+      if (current !== session) return;
+      status.textContent = `第 ${index + 1}/${current.items.length} 张：正在上传…`;
+      item.uploadPromise = uploadMemberCheckinFast(
+        item.compressed,
+        task.id,
+        item.idempotencyKey,
+        current.controller.signal
+      );
+      updateReadyState();
+      const uploaded = await item.uploadPromise;
+      if (current !== session) return;
+      item.mediaId = uploaded.mediaId;
+      item.error = null;
     } catch (error) {
-      if (current !== session || current.controller.signal.aborted) return null;
-      current.error = error;
-      status.textContent = error.message || '图片上传失败，请检查网络后点击重试。';
-      return null;
+      if (current !== session || current.controller.signal.aborted) return;
+      item.error = error;
     } finally {
-      if (current === session) {
-        current.uploadPromise = null;
-        updateReadyState();
-      }
+      item.uploadPromise = null;
+      updateStatus();
     }
+  };
+
+  const runIndexes = (current, indexes) => {
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < indexes.length && current === session && !current.controller.signal.aborted) {
+        const index = indexes[cursor++];
+        await processItem(current, current.items[index], index);
+      }
+    };
+    current.processingPromise = Promise.all(
+      Array.from({ length: Math.min(uploadConcurrency(), indexes.length) }, () => worker())
+    ).finally(() => {
+      if (current === session) {
+        current.processingPromise = null;
+        form._media = current.items.filter((item) => item.mediaId).map((item) => ({ mediaId: item.mediaId }));
+        updateStatus();
+      }
+    });
+    updateReadyState();
+    return current.processingPromise;
   };
 
   document.querySelector('#backMember').onclick = () => {
     releaseSession();
     home();
   };
+
   retryButton.onclick = () => {
-    if (session?.compressed && !session.uploadPromise && !session.mediaId) {
-      void uploadCurrentSession(session);
-    }
+    if (!session || session.processingPromise) return;
+    const indexes = session.items
+      .map((item, index) => (item.error && !item.mediaId ? index : -1))
+      .filter((index) => index >= 0);
+    if (indexes.length) void runIndexes(session, indexes);
   };
-  form.images.onchange = async () => {
-    const previewStartedAt = performance.now();
+
+  form.images.onchange = () => {
+    const files = [...(form.images.files || [])];
     releaseSession();
-    submitButton.disabled = true;
-    retryButton.hidden = true;
     preview.innerHTML = '';
-    const file = form.images.files?.[0];
-    if (!file) {
+    retryButton.hidden = true;
+    if (!files.length) {
       status.textContent = '请选择图片。';
+      updateReadyState();
+      return;
+    }
+    if (files.length > maxImages) {
+      form.images.value = '';
+      status.textContent = `当前任务最多上传 ${maxImages} 张图片。`;
+      void openDialog({
+        title: '图片数量超过限制',
+        message: `管理员设置当前任务最多上传 ${maxImages} 张图片，请重新选择。`,
+        confirmText: '重新选择'
+      });
       return;
     }
     const current = {
-      idempotencyKey: createIdempotencyKey(),
       controller: new AbortController(),
-      compressed: null,
-      mediaId: null,
-      uploadPromise: null,
-      previewUrl: null
+      items: files.map((file) => {
+        const previewUrl = URL.createObjectURL(file);
+        mediaPreviewUrls.add(previewUrl);
+        return {
+          file,
+          previewUrl,
+          idempotencyKey: createIdempotencyKey(),
+          compressed: null,
+          mediaId: null,
+          uploadPromise: null,
+          error: null
+        };
+      }),
+      processingPromise: null
     };
     session = current;
-    try {
-      const sourceFile = await normalizeSourceImage(file);
-      if (current !== session) return;
-      current.previewUrl = URL.createObjectURL(sourceFile);
-      mediaPreviewUrls.add(current.previewUrl);
-      renderPreviews(preview, [{ previewUrl: current.previewUrl }]);
-      recordPerf('preview', {
-        imageCount: 1,
-        duration: roundedDuration(previewStartedAt),
-        navigationEpoch
-      });
-      status.textContent = '正在压缩图片…';
-      const compressStartedAt = performance.now();
-      try {
-        current.compressed = await compressMemberCheckinImage(sourceFile, {
-          signal: current.controller.signal
-        });
-      } finally {
-        recordPerf('compress', {
-          variant: 'member-checkin-fast',
-          sourceBytes: Number(sourceFile.size || 0),
-          outputBytes: Number(current.compressed?.file?.size || 0),
-          duration: roundedDuration(compressStartedAt),
-          navigationEpoch
-        });
-      }
-      if (current !== session) return;
-      await uploadCurrentSession(current);
-    } catch (error) {
-      if (current !== session || current.controller.signal.aborted) return;
-      current.error = error;
-      status.textContent = error.message || '图片处理失败，请重新选择图片。';
-      if (!current.compressed) {
-        await openDialog({
-          title: '图片处理失败',
-          message: status.textContent,
-          confirmText: '重新选择'
-        });
-      }
-      updateReadyState();
-    }
+    renderPreviews(preview, current.items.map((item) => ({ previewUrl: item.previewUrl })));
+    status.textContent = `正在处理 ${current.items.length} 张图片…`;
+    void runIndexes(current, current.items.map((_, index) => index));
   };
 
   form.onsubmit = async (event) => {
     event.preventDefault();
-    const submitStartedAt = performance.now();
-    let submitSucceeded = false;
     const restoreButton = beginButtonLoading(submitButton, '正在提交…');
-    if (session?.uploadPromise) {
-      status.textContent = '图片上传中，请稍候…';
-      await session.uploadPromise.catch(() => null);
-    }
-    if (!session?.mediaId) {
-      status.textContent = '图片尚未就绪，请重新选择或点击重试上传。';
+    if (session?.processingPromise) await session.processingPromise.catch(() => null);
+    const mediaIds = session?.items?.map((item) => item.mediaId).filter(Boolean) || [];
+    if (!session || mediaIds.length !== session.items.length) {
+      status.textContent = '仍有图片未就绪，请重试失败图片。';
       restoreButton();
       updateReadyState();
       return;
@@ -1551,7 +2034,7 @@ function memberCheckinForm(task) {
         method: 'PUT',
         body: JSON.stringify({
           occurrenceDate: task.occurrenceDate,
-          mediaIds: [session.mediaId]
+          mediaIds
         })
       });
       patchStudentTask(task.id, (cachedTask) => {
@@ -1562,9 +2045,10 @@ function memberCheckinForm(task) {
         return {
           ...cachedTask,
           memberCheckin: {
-            id: cachedTask.memberCheckin?.id || `confirmed:${session.mediaId}`,
+            id: cachedTask.memberCheckin?.id || `confirmed:${mediaIds[0]}`,
             userId: user.id,
-            occurrenceDate: result.occurrenceDate || task.occurrenceDate
+            occurrenceDate: result.occurrenceDate || task.occurrenceDate,
+            imageCount: mediaIds.length
           },
           teamProgress: cachedTask.teamProgress ? {
             ...cachedTask.teamProgress,
@@ -1576,19 +2060,16 @@ function memberCheckinForm(task) {
         };
       });
       releaseSession();
-      submitSucceeded = true;
+      recordPerf('submit', {
+        action: 'member-checkin', success: true,
+        imageCount: mediaIds.length, navigationEpoch
+      });
       returnToCachedStudentHome('个人打卡成功');
     } catch (error) {
+      recordPerf('submit', { action: 'member-checkin', success: false, navigationEpoch });
       alert(error?.message || '打卡提交失败，请稍后重试。');
       restoreButton();
-    } finally {
-      if (session) submitButton.disabled = !session.mediaId;
-      recordPerf('submit', {
-        action: 'member-checkin',
-        success: submitSucceeded,
-        duration: roundedDuration(submitStartedAt),
-        navigationEpoch
-      });
+      updateReadyState();
     }
   };
 }
@@ -1704,16 +2185,20 @@ function taskSubmissionForm(task) {
     <section class="card"><form id="taskSend">
       <div class="notice">上传前浏览器会自动压缩图片。支持 JPG、PNG、WebP，原图单张不超过 5MB，最多 ${task.imageLimit} 张。</div>
       <label>活动图片</label><input name="images" type="file" accept="image/jpeg,image/png,image/webp" multiple>
-      <div class="image-preview" id="taskPreview"></div>
+      <div class="image-preview" id="taskPreview">${(current?.images || []).map((image) => {
+        const thumbUrl = image.thumbUrl || image.imageUrl || image.displayUrl || '';
+        const displayUrl = image.displayUrl || thumbUrl;
+        return `<button type="button" class="image-viewer-trigger" data-image-viewer="${escapeHtml(thumbUrl)}" data-image-thumb="${escapeHtml(thumbUrl)}" data-image-display="${escapeHtml(displayUrl)}" data-image-alt="已保存队伍作品"><span class="image-shell"><img src="${escapeHtml(thumbUrl)}" width="720" height="540" loading="eager" decoding="async" alt="已保存队伍作品"></span></button>`;
+      }).join('')}</div>
       <div class="row"><p class="muted upload-status" id="taskUploadStatus" aria-live="polite">选择图片后会立即预览并在后台上传。</p>
         <button type="button" class="secondary" id="retryTaskUpload" hidden>重试失败图片</button></div>
       ${user.trackId === 'health' ? `<label>餐次</label><select name="mealType" required><option value="">请选择</option><option value="breakfast" ${current?.mealType === 'breakfast' ? 'selected' : ''}>早餐</option><option value="lunch" ${current?.mealType === 'lunch' ? 'selected' : ''}>午餐</option><option value="dinner" ${current?.mealType === 'dinner' ? 'selected' : ''}>晚餐</option></select>` : ''}
       <label>活动文案${task.copyRequirement ? '（必填）' : '（选填）'}</label><textarea name="copy">${escapeHtml(current?.copy || '')}</textarea>
-      ${user.trackId === 'interaction' ? `<label class="check-label"><input name="isPublic" type="checkbox" ${current?.isPublic ? 'checked' : ''}> 同意发布至活动广场</label>
-      <div id="plazaCopyField" style="display:${current?.isPublic ? 'block' : 'none'}"><label>广场作品文案（发布时必填）</label><textarea name="plazaCopy">${escapeHtml(current?.plazaCopy || '')}</textarea></div>` : ''}
+      ${user.trackId === 'interaction' ? `<label class="check-label"><input name="isPublic" type="checkbox" ${current?.isPublic ? 'checked' : ''}> 同意发布至活动广场</label>` : ''}
       <div class="row"><button type="button" class="secondary" id="back">返回</button><button type="button" class="secondary" data-intent="draft">保存草稿</button><button data-intent="submit">最终提交</button></div>
     </form></section>`;
   const form = document.querySelector('#taskSend');
+  prepareDynamicContent(app);
   const taskStatus = document.querySelector('#taskUploadStatus');
   const taskRetry = document.querySelector('#retryTaskUpload');
   let mediaSession = null;
@@ -1753,9 +2238,6 @@ function taskSubmissionForm(task) {
       taskStatus.textContent = error.message;
     }
   };
-  if (form.isPublic) form.isPublic.onchange = () => {
-    document.querySelector('#plazaCopyField').style.display = form.isPublic.checked ? 'block' : 'none';
-  };
   form.querySelectorAll('[data-intent]').forEach((button) => {
     button.onclick = async (event) => {
       event.preventDefault();
@@ -1781,7 +2263,7 @@ function taskSubmissionForm(task) {
             occurrenceDate: task.occurrenceDate,
             mediaIds: media.map((item) => item.mediaId),
             copy: form.copy.value,
-            plazaCopy: form.plazaCopy?.value || '',
+            plazaCopy: form.copy.value,
             mealType: form.mealType?.value,
             isPublic: Boolean(form.isPublic?.checked)
           })
@@ -1792,7 +2274,7 @@ function taskSubmissionForm(task) {
             ...(cachedTask.submission || {}),
             ...result.submission,
             copy: form.copy.value,
-            plazaCopy: form.plazaCopy?.value || '',
+            plazaCopy: form.copy.value,
             mealType: form.mealType?.value || '',
             isPublic: Boolean(form.isPublic?.checked),
             occurrenceDate: task.occurrenceDate,
@@ -1850,6 +2332,50 @@ async function inbox(page = 1) {
   });
 }
 
+/* APPROVED_PLAZA_PREFETCH_V2 */
+const prefetchStudentPlaza = () => {
+  if (user?.role !== 'student') return Promise.resolve(null);
+  const cacheKey = scopedCacheKey('plaza', 'latest', 1, '');
+  const cached = readViewCache(plazaViewCache, cacheKey);
+  if (cached) return Promise.resolve(cached.data);
+  if (studentPlazaPrefetchPromise) return studentPlazaPrefetchPromise;
+  const startedAt = performance.now();
+  const path = '/api/plaza?sort=latest&page=1&limit=20';
+  const bootstrapPromise = window.__BOOTSTRAP_PLAZA_PROMISE__;
+  const sourcePromise = bootstrapPromise
+    ? Promise.resolve(bootstrapPromise).then((result) => result || api(path))
+    : api(path);
+  studentPlazaPrefetchPromise = sourcePromise
+    .then((result) => {
+      if (!result) return null;
+      writeViewCache(plazaViewCache, cacheKey, result);
+      const preloadImages = (result.posts || []).slice(0, 4)
+        .map((post) => post.images?.[0])
+        .filter(Boolean);
+      preloadImages.forEach((image, index) => {
+        const thumbUrl = buildMediaUrl(image.thumbUrl || image.imageUrl || image.displayUrl);
+        if (!thumbUrl) return;
+        const preload = new Image();
+        preload.decoding = 'async';
+        preload.fetchPriority = index < 2 ? 'high' : 'auto';
+        preload.src = thumbUrl;
+      });
+      recordPerf('plaza-prefetch', {
+        status: 'ready',
+        duration: roundedDuration(startedAt),
+        hasFirstImage: Boolean(preloadImages.length),
+        bootstrapStarted: Boolean(bootstrapPromise)
+      });
+      return result;
+    })
+    .catch((error) => {
+      recordPerf('plaza-prefetch', { status: 'failed', duration: roundedDuration(startedAt), message: error.message });
+      return null;
+    })
+    .finally(() => { studentPlazaPrefetchPromise = null; });
+  window.__BOOTSTRAP_PLAZA_PROMISE__ = studentPlazaPrefetchPromise;
+  return studentPlazaPrefetchPromise;
+};
 const updatePlazaCachePost = (postId, updates) => {
   for (const entry of plazaViewCache.values()) {
     if (!entry?.data?.posts) continue;
@@ -1863,9 +2389,53 @@ const updateVisiblePlazaCard = (postId, updates) => {
     (item) => item.dataset.post === postId
   );
   if (!card) return;
-  if (updates.viewCount != null) card.querySelector('[data-plaza-views]').textContent = updates.viewCount;
-  if (updates.likeCount != null) card.querySelector('[data-plaza-likes]').textContent = updates.likeCount;
-  if (updates.commentCount != null) card.querySelector('[data-plaza-comments]').textContent = updates.commentCount;
+  const updateText = (selector, value) => {
+    const target = card.querySelector(selector);
+    if (target && value != null) target.textContent = value;
+  };
+  updateText('[data-plaza-views]', updates.viewCount);
+  updateText('[data-plaza-comments]', updates.commentCount);
+  if (updates.likeCount != null) {
+    const likeTarget = card.querySelector('[data-plaza-likes]')
+      || card.querySelector('.plaza-like > span:last-child');
+    if (likeTarget) likeTarget.textContent = updates.likeCount;
+  }
+};
+
+/* PLAZA_MOBILE_LAYOUT_V1 */
+/* PLAZA_PERFORMANCE_QUALITY_V3 */
+/* MOBILE_REAL_UNDER_1S_V5 */
+const rebalancePlazaColumns = () => {
+  const grid = document.querySelector('.plaza-grid');
+  const columns = [...(grid?.querySelectorAll('[data-plaza-column]') || [])];
+  if (!grid || columns.length !== 2 || grid.dataset.rebalancing === 'true') return;
+  const cards = [...grid.querySelectorAll('.plaza-card')]
+    .sort((left, right) => Number(left.dataset.cardIndex || 0) - Number(right.dataset.cardIndex || 0));
+  if (!cards.length) return;
+  grid.dataset.rebalancing = 'true';
+  columns.forEach((column) => column.replaceChildren());
+  cards.forEach((card, index) => {
+    const target = index < 2
+      ? columns[index]
+      : columns[0].getBoundingClientRect().height <= columns[1].getBoundingClientRect().height
+        ? columns[0]
+        : columns[1];
+    target.append(card);
+  });
+  grid.dataset.rebalancing = 'false';
+};
+
+const applyPlazaCoverRatio = (image) => {
+  const shell = image?.closest?.('.plaza-card-cover');
+  if (!shell) return;
+  const naturalRatio = Number(image.naturalWidth) / Number(image.naturalHeight);
+  const feedRatio = Number.isFinite(naturalRatio) && naturalRatio > 0
+    ? Math.min(4 / 3, Math.max(3 / 4, naturalRatio))
+    : 4 / 3;
+  shell.style.aspectRatio = String(feedRatio);
+  shell.dataset.feedRatio = feedRatio.toFixed(3);
+  shell.classList.add('loaded');
+  requestAnimationFrame(rebalancePlazaColumns);
 };
 
 const renderPlazaPage = (result, sort, page, month, pageEpoch, options = {}) => {
@@ -1873,81 +2443,136 @@ const renderPlazaPage = (result, sort, page, month, pageEpoch, options = {}) => 
   if (!isCurrentNavigation(pageEpoch)) return;
   document.body.dataset.view = 'plaza';
   const preservedScroll = options.preserveScroll ? window.scrollY : 0;
-  const cards = result.posts.map((post) => `
-    <article class="plaza-card" data-post="${post.id}">
-      <div class="image-shell">
+  const query = String(options.query ?? result.query ?? '').trim();
+  const cardMarkup = result.posts.map((post, cardIndex) => `
+    <article class="plaza-card" data-post="${post.id}" data-card-index="${cardIndex}" tabindex="0" role="button" aria-label="查看活动内容">
+      <div class="image-shell plaza-card-cover">
         ${post.images[0]
-          ? `<img loading="lazy" decoding="async" fetchpriority="low" width="480" height="360"
-              data-src="${escapeHtml(post.images[0].thumbUrl || post.images[0].imageUrl)}"
-              alt="${escapeHtml(post.teamName)}活动图片"
-              onload="this.parentElement.classList.add('loaded')"
-              onerror="this.hidden=true;this.parentElement.classList.add('failed')">`
+          ? `<img loading="${cardIndex < 4 ? 'eager' : 'lazy'}" decoding="async"
+              fetchpriority="${cardIndex < 2 ? 'high' : cardIndex < 4 ? 'auto' : 'low'}"
+              data-priority="${cardIndex < 4 ? 'high' : 'low'}"
+              data-perf-image="plaza-thumb" width="480" height="360"
+              ${cardIndex < 4
+                ? `src="${escapeHtml(post.images[0].thumbUrl || post.images[0].imageUrl)}"`
+                : `data-src="${escapeHtml(post.images[0].thumbUrl || post.images[0].imageUrl)}"`}
+              alt="活动图片"
+              onload="applyPlazaCoverRatio(this)"
+              onerror="this.hidden=true;this.parentElement.classList.add('failed');requestAnimationFrame(rebalancePlazaColumns)">`
           : '<span class="image-fallback">暂无图片</span>'}
         <span class="image-error">图片加载失败</span>
       </div>
       <div class="plaza-body">
-        <span class="eyebrow dark">${escapeHtml(post.taskName)}</span>
         <h2>${escapeHtml(post.teamName)}</h2>
-        <p class="muted">发布人：${escapeHtml(post.publisherName)}</p>
-        <p class="muted">${post.members.map((member) => escapeHtml(member.name)).join('、')}</p>
-        <p>${escapeHtml(post.copy)}</p>
-        <div class="row muted"><span>${formatDate(post.publishedAt)}</span><span class="right">
-          浏览 <span data-plaza-views>${post.viewCount}</span>　
-          点赞 <span data-plaza-likes>${post.likeCount}</span>　
-          评论 <span data-plaza-comments>${post.commentCount}</span>
-        </span></div>
+        <p class="plaza-card-copy">${escapeHtml(post.copy || '')}</p>
+        <div class="plaza-card-meta">
+          <span class="plaza-avatar" aria-hidden="true">${escapeHtml((post.publisherName || '同').slice(-1))}</span>
+          <span class="plaza-publisher">${escapeHtml(post.publisherName || '匿名发布者')}</span>
+          <span class="plaza-like" aria-label="点赞${post.likeCount}">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.7a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.5 1-1a5.5 5.5 0 0 0 0-7.8Z"/></svg>
+            <span>${post.likeCount}</span>
+          </span>
+        </div>
       </div>
-    </article>`).join('');
+    </article>`);
+  const cards = cardMarkup.length
+    ? `<div class="plaza-column" data-plaza-column="0">${cardMarkup.filter((_, index) => index % 2 === 0).join('')}</div><div class="plaza-column" data-plaza-column="1">${cardMarkup.filter((_, index) => index % 2 === 1).join('')}</div>`
+    : `<div class="plaza-empty"><strong>${query ? '没有找到相关内容' : '当前没有公开内容'}</strong><span>${query ? '换一个关键词试试' : '公开提交后会显示在这里'}</span></div>`;
   app.innerHTML = `
-    <header class="hero"><div class="row"><div><h1>四校区活动广场</h1><p>内容仅来自公开的四校区任务提交</p></div><button class="secondary right" id="backHome">返回</button></div></header>
-    <section class="card plaza-toolbar">
-      <div class="row">
-        <button class="${sort === 'latest' ? '' : 'secondary'}" data-sort="latest">最新发布</button>
-        <button class="${sort === 'hot' ? '' : 'secondary'}" data-sort="hot">热门排行</button>
-        <button class="${sort === 'monthly' ? '' : 'secondary'}" data-sort="monthly">月度排行</button>
-        <label class="right">月份 <input id="plazaMonth" type="month" value="${escapeHtml(result.month)}"></label>
-      </div>
+    <header class="plaza-appbar">
+      <button class="plaza-icon-button" id="backHome" type="button" aria-label="返回首页">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <nav class="plaza-channel-tabs" aria-label="活动广场排序">
+        <button class="${sort === 'latest' ? 'active' : ''}" data-sort="latest" type="button">最新发布</button>
+        <button class="${sort === 'hot' ? 'active' : ''}" data-sort="hot" type="button">热门排行</button>
+      </nav>
+      <button class="plaza-icon-button" id="togglePlazaSearch" type="button" aria-label="搜索活动内容" aria-expanded="${query ? 'true' : 'false'}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+      </button>
+    </header>
+    <section class="plaza-search-panel" id="plazaSearchPanel" ${query ? '' : 'hidden'}>
+      <form id="plazaSearchForm" role="search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+        <input id="plazaSearchInput" type="search" value="${escapeHtml(query)}" maxlength="40" autocomplete="off" placeholder="搜索队伍、任务、发布人或内容">
+        <button class="plaza-search-clear" id="clearPlazaSearch" type="button" ${query ? '' : 'hidden'} aria-label="清空搜索">×</button>
+      </form>
     </section>
-    <section class="plaza-grid">${cards || '<div class="card muted">当前没有公开内容</div>'}</section>
-    <div class="row plaza-pager">
-      <button class="secondary" id="prevPage" ${page <= 1 ? 'disabled' : ''}>上一页</button>
-      <span>第 ${page} 页 · 共 ${result.total} 条</span>
-      <button class="secondary" id="nextPage" ${!result.hasMore ? 'disabled' : ''}>下一页</button>
+    ${query ? `<p class="plaza-search-summary">“${escapeHtml(query)}”的搜索结果 · ${result.total}条</p>` : ''}
+    <section class="plaza-grid">${cards}</section>
+    <div class="plaza-pager" ${result.total > result.limit ? '' : 'hidden'}>
+      <button class="plaza-page-button" id="prevPage" type="button" ${page <= 1 ? 'disabled' : ''}>上一页</button>
+      <span>${page} / ${Math.max(1, Math.ceil(result.total / result.limit))}</span>
+      <button class="plaza-page-button" id="nextPage" type="button" ${!result.hasMore ? 'disabled' : ''}>下一页</button>
     </div>
     <p class="view-cache-status muted" id="viewCacheStatus" hidden></p>
     <div id="modalRoot"></div>`;
   prepareDynamicContent(app);
+  requestAnimationFrame(rebalancePlazaColumns);
+  scheduleVisiblePlazaDetailWarmup();
   recordPerf('page-render', {
     page: 'plaza',
     duration: roundedDuration(renderStartedAt),
     navigationEpoch: pageEpoch
   });
+
+  const searchPanel = document.querySelector('#plazaSearchPanel');
+  const searchInput = document.querySelector('#plazaSearchInput');
+  const searchToggle = document.querySelector('#togglePlazaSearch');
   document.querySelector('#backHome').onclick = home;
+  searchToggle.onclick = () => {
+    const opening = searchPanel.hidden;
+    searchPanel.hidden = !opening;
+    searchToggle.setAttribute('aria-expanded', String(opening));
+    if (opening) requestAnimationFrame(() => searchInput.focus());
+  };
+  document.querySelector('#plazaSearchForm').onsubmit = (event) => {
+    event.preventDefault();
+    plaza(sort, 1, '', searchInput.value);
+  };
+  document.querySelector('#clearPlazaSearch').onclick = () => {
+    if (query) plaza(sort, 1, '', '');
+    else {
+      searchInput.value = '';
+      searchInput.focus();
+    }
+  };
   document.querySelectorAll('[data-sort]').forEach((button) => {
-    button.onclick = () => plaza(button.dataset.sort, 1, document.querySelector('#plazaMonth').value);
+    button.onclick = () => plaza(button.dataset.sort, 1, '', query);
   });
-  document.querySelector('#plazaMonth').onchange = (event) => plaza('monthly', 1, event.target.value);
-  document.querySelector('#prevPage').onclick = () => plaza(sort, page - 1, result.month);
-  document.querySelector('#nextPage').onclick = () => plaza(sort, page + 1, result.month);
+  document.querySelector('#prevPage').onclick = () => plaza(sort, page - 1, '', query);
+  document.querySelector('#nextPage').onclick = () => plaza(sort, page + 1, '', query);
   document.querySelectorAll('[data-post]').forEach((card) => {
-    card.onclick = () => openPlazaPost(card.dataset.post, sort, page, result.month);
+    const open = () => openPlazaPost(card.dataset.post, sort, page, '');
+    card.onclick = open;
+    card.onkeydown = (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        open();
+      }
+    };
   });
   if (options.preserveScroll) requestAnimationFrame(() => window.scrollTo(0, preservedScroll));
 };
 
-async function plaza(sort = 'latest', page = 1, month = '') {
+async function plaza(sort = 'latest', page = 1, month = '', query = '') {
   const pageEpoch = beginNavigation();
-  const cacheKey = scopedCacheKey('plaza', sort, page, month);
+  /* LAZY_PLAZA_ENTRY_V1 */
+  void window.__LOAD_PLAZA_EXTRAS__?.();
+  const safeSort = sort === 'hot' ? 'hot' : 'latest';
+  const safeQuery = String(query || '').trim().slice(0, 40);
+  const cacheKey = scopedCacheKey('plaza', safeSort, page, safeQuery);
   const cached = readViewCache(plazaViewCache, cacheKey);
-  const path = `/api/plaza?sort=${sort}&page=${page}&limit=20${month ? `&month=${month}` : ''}`;
+  const path = `/api/plaza?sort=${safeSort}&page=${page}&limit=20${safeQuery ? `&q=${encodeURIComponent(safeQuery)}` : ''}`;
   if (cached) {
-    renderPlazaPage(cached.data, sort, page, month, pageEpoch);
+    renderPlazaPage(cached.data, safeSort, page, '', pageEpoch, { query: safeQuery });
     const refresh = async () => {
       try {
         const result = await api(path);
         writeViewCache(plazaViewCache, cacheKey, result);
-        if (!isCurrentNavigation(pageEpoch) || document.body.dataset.view !== 'plaza') return;
-        renderPlazaPage(result, sort, page, month, pageEpoch, { preserveScroll: true });
+        if (!isCurrentNavigation(pageEpoch)
+            || document.body.dataset.view !== 'plaza'
+            || document.querySelector('.plaza-detail')) return;
+        renderPlazaPage(result, safeSort, page, '', pageEpoch, { preserveScroll: true, query: safeQuery });
       } catch {
         if (!isCurrentNavigation(pageEpoch)) return;
         const status = document.querySelector('#viewCacheStatus');
@@ -1957,13 +2582,22 @@ async function plaza(sort = 'latest', page = 1, month = '') {
         }
       }
     };
-    if (cacheIsFresh(cached)) queueMicrotask(() => { void refresh(); });
-    else void refresh();
+    if (cacheIsFresh(cached)) {
+      setTimeout(() => { void refresh(); }, 3200);
+    } else void refresh();
     return;
   }
-  const result = await api(path);
+  // Reuse the bootstrap/home prefetch instead of issuing a second D1 request when the
+  // user enters Plaza immediately after the home screen becomes interactive.
+  const firstPagePromise = safeSort === 'latest' && page === 1 && !safeQuery
+    ? (studentPlazaPrefetchPromise || prefetchStudentPlaza())
+    : null;
+  const preloadedResult = firstPagePromise
+    ? await Promise.resolve(firstPagePromise).catch(() => null)
+    : null;
+  const result = preloadedResult || await api(path);
   writeViewCache(plazaViewCache, cacheKey, result);
-  renderPlazaPage(result, sort, page, month, pageEpoch);
+  renderPlazaPage(result, safeSort, page, '', pageEpoch, { query: safeQuery });
 }
 
 function rankingTable(items, metric, label) {
@@ -2059,83 +2693,92 @@ async function rankings(period = 'day', key = '') {
   renderRankingsPage(result, period, currentKey, pageEpoch);
 }
 
+/* CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1 */
+const restorePlazaListFromHistory = (state) => {
+  if (!state?.plazaList) return false;
+  document.body.dataset.view = 'plaza';
+  const scrollY = Math.max(0, Number(state.plazaScrollY || 0));
+  void plaza(state.plazaSort || 'latest', Math.max(1, Number(state.plazaPage || 1)), state.plazaMonth || '', { preserveScroll: false })
+    .then(() => requestAnimationFrame(() => window.scrollTo(0, scrollY)))
+    .catch((error) => { showToast(error.message || '活动广场加载失败', 'error'); });
+  return true;
+};
+window.addEventListener('popstate', (event) => {
+  if (document.body.dataset.view === 'plaza-detail' && event.state?.plazaList) restorePlazaListFromHistory(event.state);
+});
+
 async function openPlazaPost(postId, sort, page, month, countView = true) {
-  const root = document.querySelector('#modalRoot');
-  if (!root) return;
-  const modalEpoch = ++plazaModalEpoch;
+  const root = app;
+  const listUrl = new URL(location.href);
+  listUrl.searchParams.delete('plazaPost');
   const plazaScrollY = window.scrollY;
+  const listState = { ...(history.state || {}), plazaList: true, plazaDetail: false, plazaSort: sort, plazaPage: page, plazaMonth: month, plazaScrollY };
+  history.replaceState(listState, '', listUrl);
+  const detailUrl = new URL(listUrl);
+  detailUrl.searchParams.set('plazaPost', postId);
+  history.pushState({ ...listState, plazaList: false, plazaDetail: true, plazaPost: postId }, '', detailUrl);
+  document.body.dataset.view = 'plaza-detail';
+  const modalEpoch = ++plazaModalEpoch;
+  const detailStartedAt = performance.now();
+  const cacheKey = plazaPostCacheKey(postId);
+  const cachedEntry = plazaPostCache.get(cacheKey);
+  const previewPost = readPlazaPostPreview(postId);
+  const detailCacheHit = Boolean(
+    cachedEntry && Date.now() - cachedEntry.savedAt <= PLAZA_POST_CACHE_TTL_MS
+  );
   let post = null;
-  let pendingViewIncrement = false;
-  root.innerHTML = `<div class="modal-backdrop"><section class="card modal plaza-detail" aria-busy="true">
-    <div class="row"><h2>正在读取作品…</h2><button class="secondary right" id="closePost">关闭</button></div>
+  let commentPage = 1;
+
+  const previewImage = previewPost?.images?.[0];
+  root.innerHTML = previewPost ? `<section class="card plaza-detail plaza-detail-page" aria-busy="true">
+    <div class="row"><div><span class="eyebrow dark">${escapeHtml(previewPost.taskName || '')}</span><h2>${escapeHtml(previewPost.teamName || '')}</h2></div><button class="secondary right" id="closePost">返回</button></div>
+    <div class="plaza-photos">${previewImage ? `<button class="image-viewer-trigger" data-image-viewer="${escapeHtml(previewImage.thumbUrl || previewImage.imageUrl)}" data-image-thumb="${escapeHtml(previewImage.thumbUrl || previewImage.imageUrl)}" data-image-display="${escapeHtml(previewImage.displayUrl || previewImage.imageUrl)}" data-image-alt="活动图片"><div class="image-shell"><img data-perf-image="plaza-detail-thumb" data-priority="high" loading="eager" decoding="async" fetchpriority="high" width="640" height="480" src="${escapeHtml(previewImage.thumbUrl || previewImage.imageUrl)}" srcset="${escapeHtml(previewImage.thumbUrl || previewImage.imageUrl)} 960w, ${escapeHtml(previewImage.displayUrl || previewImage.imageUrl)} 2048w" sizes="(max-width: 720px) 100vw, 720px" alt="活动图片" onload="this.parentElement.classList.add('loaded')" onerror="this.hidden=true;this.parentElement.classList.add('failed')"><span class="image-error">图片加载失败</span></div></button>` : ''}</div>
+    <p>${escapeHtml(previewPost.copy || '')}</p>
+    <div class="row"><span class="muted">${formatDate(previewPost.publishedAt)} · 浏览 ${Number(previewPost.viewCount || 0)} · 评论 ${Number(previewPost.commentCount || 0)}</span><button class="secondary right" disabled>点赞 ${Number(previewPost.likeCount || 0)}</button></div>
+    <section class="comments-panel"><h3>评论</h3><div><p class="muted comments-loading">详情与评论加载中…</p></div></section>
+  </section>` : `<section class="card plaza-detail plaza-detail-page" aria-busy="true">
+    <div class="row"><h2>正在读取作品…</h2><button class="secondary right" id="closePost">返回</button></div>
     <div class="plaza-detail-placeholder"></div>
-  </section></div>`;
+  </section>`;
+
   const closePost = () => {
     if (modalEpoch !== plazaModalEpoch) return;
     plazaModalEpoch += 1;
-    root.innerHTML = '';
-    requestAnimationFrame(() => window.scrollTo(0, plazaScrollY));
+    history.back();
   };
+  prepareDynamicContent(root);
   root.querySelector('#closePost').onclick = closePost;
+  if (previewPost) recordPerf('plaza-detail-preview-visible', { duration: roundedDuration(detailStartedAt), postId });
 
-  const detailPromise = api(`/api/plaza/${postId}`);
-  const commentsPromise = api(`/api/plaza/${postId}/comments?page=1&limit=10`);
-  const viewKey = scopedCacheKey('plaza-view', postId);
-  if (countView && !countedPlazaViews.has(viewKey)) {
-    countedPlazaViews.add(viewKey);
-    void api(`/api/plaza/${postId}/view`, { method: 'POST' })
-      .then((result) => {
-        if (!result.counted) return;
-        if (!post) {
-          pendingViewIncrement = true;
-          return;
-        }
-        const nextViewCount = Number(post?.viewCount || 0) + 1;
-        if (post) post.viewCount = nextViewCount;
-        updatePlazaCachePost(postId, { viewCount: nextViewCount });
-        updateVisiblePlazaCard(postId, { viewCount: nextViewCount });
-        const detailCount = root.querySelector('[data-detail-views]');
-        if (detailCount) detailCount.textContent = nextViewCount;
-        rankingViewCache.clear();
-      })
-      .catch(() => {});
-  }
+  let commentsPromise = null;
 
-  let commentResult;
   try {
-    [{ post }, commentResult] = await Promise.all([detailPromise, commentsPromise]);
+    post = await loadPlazaPost(postId);
   } catch (error) {
     if (modalEpoch !== plazaModalEpoch) return;
-    root.innerHTML = `<div class="modal-backdrop"><section class="card modal plaza-detail">
-      <div class="row"><h2>作品读取失败</h2><button class="secondary right" id="closePost">关闭</button></div>
+    root.innerHTML = `<section class="card plaza-detail plaza-detail-page">
+      <div class="row"><h2>作品读取失败</h2><button class="secondary right" id="closePost">返回</button></div>
       <p class="bad">${escapeHtml(error.message)}</p>
-    </section></div>`;
+    </section>`;
     root.querySelector('#closePost').onclick = closePost;
     return;
   }
   if (modalEpoch !== plazaModalEpoch) return;
-  if (pendingViewIncrement) {
-    post.viewCount = Number(post.viewCount || 0) + 1;
-    updatePlazaCachePost(postId, { viewCount: post.viewCount });
-    updateVisiblePlazaCard(postId, { viewCount: post.viewCount });
-    rankingViewCache.clear();
-  }
-  const commentsHtml = commentResult.comments.map((comment) => `
-    <article class="comment-item" data-comment="${comment.id}">
-      <div><strong>${escapeHtml(comment.name)}</strong><span class="muted">${formatDate(comment.createdAt)}</span></div>
-      <p>${escapeHtml(comment.content)}</p>
-      ${comment.canDelete ? '<button class="link-button delete-comment">删除</button>' : ''}
-    </article>`).join('');
-  root.innerHTML = `<div class="modal-backdrop"><section class="card modal plaza-detail">
-    <div class="row"><div><span class="eyebrow dark">${escapeHtml(post.taskName)}</span><h2>${escapeHtml(post.teamName)}</h2></div><button class="secondary right" id="closePost">关闭</button></div>
+
+  root.innerHTML = `<section class="card plaza-detail plaza-detail-page">
+    <div class="row"><div><span class="eyebrow dark">${escapeHtml(post.taskName)}</span><h2>${escapeHtml(post.teamName)}</h2></div><button class="secondary right" id="closePost">返回</button></div>
     <p class="muted">成员：${post.members.map((member) => `${escapeHtml(member.name)}（${escapeHtml(member.campus)}）`).join('、')}</p>
-    <div class="plaza-photos">${post.images.map((image) => `
+    <div class="plaza-photos">${post.images.map((image, imageIndex) => `
         <button class="image-viewer-trigger" data-image-viewer="${escapeHtml(image.thumbUrl || image.imageUrl)}"
           data-image-thumb="${escapeHtml(image.thumbUrl || image.imageUrl)}"
           data-image-display="${escapeHtml(image.displayUrl || image.imageUrl)}" data-image-alt="活动图片">
         <div class="image-shell">
-          <img loading="lazy" decoding="async" fetchpriority="low" width="480" height="360"
-            data-src="${escapeHtml(image.thumbUrl || image.imageUrl)}" alt="活动图片"
+          <img data-perf-image="plaza-detail-thumb" data-priority="${imageIndex === 0 ? 'high' : 'low'}"
+            loading="${imageIndex === 0 ? 'eager' : 'lazy'}" decoding="async"
+            fetchpriority="${imageIndex === 0 ? 'high' : 'low'}" width="640" height="480"
+            ${imageIndex === 0
+              ? `src="${escapeHtml(image.thumbUrl || image.imageUrl)}" srcset="${escapeHtml(image.thumbUrl || image.imageUrl)} 960w, ${escapeHtml(image.displayUrl || image.imageUrl)} 2048w" sizes="(max-width: 720px) 100vw, 720px"`
+              : `data-src="${escapeHtml(image.thumbUrl || image.imageUrl)}"`} alt="活动图片"
             onload="this.parentElement.classList.add('loaded')"
             onerror="this.hidden=true;this.parentElement.classList.add('failed')">
           <span class="image-error">图片加载失败</span>
@@ -2145,13 +2788,96 @@ async function openPlazaPost(postId, sort, page, month, countView = true) {
     <div class="row"><span class="muted">${formatDate(post.publishedAt)} · 浏览 <span data-detail-views>${post.viewCount}</span> · 今日剩余 ${post.likeQuota.remaining}/5 个赞</span><button class="right ${post.liked ? '' : 'secondary'}" id="likePost">${post.liked ? '取消点赞' : '点赞'} <span id="likeCount">${post.likeCount}</span></button></div>
     <section class="comments-panel">
       <h3>评论 <span id="commentCount">${post.commentCount}</span></h3>
-      <form id="commentForm"><textarea name="content" maxlength="500" required placeholder="写下你的评论（最多500字）"></textarea><button>发布评论</button></form>
-      <div id="commentList">${commentsHtml || '<p class="muted empty-comments">还没有评论</p>'}</div>
-      ${commentResult.hasMore ? '<button class="secondary" id="moreComments">加载更多评论</button>' : ''}
+      <form id="commentForm"><textarea name="content" maxlength="500" required placeholder="写下你的评论（最多500字）"></textarea><button disabled>发布评论</button></form>
+      <div id="commentList"><p class="muted comments-loading">评论加载中…</p></div>
+      <button class="secondary" id="moreComments" hidden>加载更多评论</button>
     </section>
-  </section></div>`;
+  </section>`;
   prepareDynamicContent(root);
   root.querySelector('#closePost').onclick = closePost;
+  const warmDisplayImages = () => {
+    post.images.slice(0, 2).forEach((image) => {
+      const displayUrl = buildMediaUrl(image.displayUrl || image.imageUrl || image.thumbUrl);
+      if (!displayUrl) return;
+      const preload = new Image();
+      preload.decoding = 'async';
+      preload.fetchPriority = 'low';
+      preload.src = displayUrl;
+    });
+  };
+  if ('requestIdleCallback' in window) requestIdleCallback(warmDisplayImages, { timeout: 1800 });
+  else setTimeout(warmDisplayImages, 1200);
+  recordPerf('plaza-detail-visible', {
+    duration: roundedDuration(detailStartedAt),
+    cacheHit: detailCacheHit,
+    previewHit: Boolean(previewPost),
+    postId
+  });
+  commentsPromise = api(`/api/plaza/${postId}/comments?page=1&limit=10`)
+    .then((result) => ({ result, error: null }))
+    .catch((error) => ({ result: null, error }));
+
+  const bindDeleteComments = () => root.querySelectorAll('.delete-comment').forEach((button) => {
+    if (button.dataset.bound === 'true') return;
+    button.dataset.bound = 'true';
+    button.onclick = async (event) => {
+      const item = button.closest('[data-comment]');
+      const restoreButton = beginButtonLoading(event.currentTarget, '删除中…');
+      try {
+        await api(`/api/plaza/${postId}/comments/${item.dataset.comment}`, { method: 'DELETE' });
+        item.remove();
+        post.commentCount = Math.max(0, Number(post.commentCount || 0) - 1);
+        root.querySelector('#commentCount').textContent = post.commentCount;
+        patchPlazaPostCache(postId, { commentCount: post.commentCount });
+        updatePlazaCachePost(postId, { commentCount: post.commentCount });
+        updateVisiblePlazaCard(postId, { commentCount: post.commentCount });
+        if (!root.querySelector('#commentList [data-comment]')) {
+          root.querySelector('#commentList').innerHTML = '<p class="muted empty-comments">还没有评论</p>';
+        }
+      } catch (error) {
+        restoreButton();
+        alert(error.message);
+      }
+    };
+  });
+
+  const renderComments = (result, append = false) => {
+    if (modalEpoch !== plazaModalEpoch) return;
+    const list = root.querySelector('#commentList');
+    if (!list) return;
+    const commentsHtml = result.comments.map((comment) => `
+      <article class="comment-item" data-comment="${comment.id}">
+        <div><strong>${escapeHtml(comment.name)}</strong><span class="muted">${formatDate(comment.createdAt)}</span></div>
+        <p>${escapeHtml(comment.content)}</p>
+        ${comment.canDelete ? '<button class="link-button delete-comment">删除</button>' : ''}
+      </article>`).join('');
+    if (append) list.insertAdjacentHTML('beforeend', commentsHtml);
+    else list.innerHTML = commentsHtml || '<p class="muted empty-comments">还没有评论</p>';
+    const moreComments = root.querySelector('#moreComments');
+    moreComments.hidden = !result.hasMore;
+    root.querySelector('#commentForm button').disabled = false;
+    bindDeleteComments();
+  };
+
+  const showCommentsError = (error) => {
+    if (modalEpoch !== plazaModalEpoch) return;
+    const list = root.querySelector('#commentList');
+    if (!list) return;
+    list.innerHTML = `<p class="bad comments-error">评论加载失败：${escapeHtml(error.message)}</p><button class="secondary" id="retryComments" type="button">重新加载评论</button>`;
+    root.querySelector('#commentForm button').disabled = false;
+    root.querySelector('#retryComments').onclick = async (event) => {
+      const restoreButton = beginButtonLoading(event.currentTarget, '加载中…');
+      try {
+        const result = await api(`/api/plaza/${postId}/comments?page=1&limit=10`);
+        commentPage = 1;
+        renderComments(result);
+      } catch (retryError) {
+        restoreButton();
+        showCommentsError(retryError);
+      }
+    };
+  };
+
   root.querySelector('#likePost').onclick = async (event) => {
     const button = event.currentTarget;
     const restoreButton = beginButtonLoading(button, post.liked ? '正在取消…' : '正在点赞…');
@@ -2167,6 +2893,7 @@ async function openPlazaPost(postId, sort, page, month, countView = true) {
       button.disabled = false;
       button.innerHTML = `${post.liked ? '取消点赞' : '点赞'} <span id="likeCount">${post.likeCount}</span>`;
       button.classList.toggle('secondary', !post.liked);
+      patchPlazaPostCache(postId, { likeCount: post.likeCount, liked: post.liked });
       updatePlazaCachePost(postId, { likeCount: post.likeCount, liked: post.liked });
       updateVisiblePlazaCard(postId, { likeCount: post.likeCount });
       rankingViewCache.clear();
@@ -2175,24 +2902,7 @@ async function openPlazaPost(postId, sort, page, month, countView = true) {
       alert(error.message);
     }
   };
-  const bindDeleteComments = () => root.querySelectorAll('.delete-comment').forEach((button) => {
-    button.onclick = async (event) => {
-      const item = button.closest('[data-comment]');
-      const restoreButton = beginButtonLoading(event.currentTarget, '删除中…');
-      try {
-        await api(`/api/plaza/${postId}/comments/${item.dataset.comment}`, { method: 'DELETE' });
-        item.remove();
-        post.commentCount = Math.max(0, post.commentCount - 1);
-        root.querySelector('#commentCount').textContent = post.commentCount;
-        updatePlazaCachePost(postId, { commentCount: post.commentCount });
-        updateVisiblePlazaCard(postId, { commentCount: post.commentCount });
-      } catch (error) {
-        restoreButton();
-        alert(error.message);
-      }
-    };
-  });
-  bindDeleteComments();
+
   root.querySelector('#commentForm').onsubmit = async (event) => {
     event.preventDefault();
     const form = event.target;
@@ -2204,6 +2914,9 @@ async function openPlazaPost(postId, sort, page, month, countView = true) {
         body: JSON.stringify({ content: form.content.value })
       });
       root.querySelector('.empty-comments')?.remove();
+      root.querySelector('.comments-error')?.remove();
+      root.querySelector('.comments-loading')?.remove();
+      root.querySelector('#retryComments')?.remove();
       root.querySelector('#commentList').insertAdjacentHTML('afterbegin', `
         <article class="comment-item" data-comment="${result.comment.id}">
           <div><strong>${escapeHtml(result.comment.name)}</strong><span class="muted">${formatDate(result.comment.createdAt)}</span></div>
@@ -2211,6 +2924,7 @@ async function openPlazaPost(postId, sort, page, month, countView = true) {
         </article>`);
       root.querySelector('#commentCount').textContent = result.commentCount;
       post.commentCount = result.commentCount;
+      patchPlazaPostCache(postId, { commentCount: post.commentCount });
       updatePlazaCachePost(postId, { commentCount: post.commentCount });
       updateVisiblePlazaCard(postId, { commentCount: post.commentCount });
       form.reset();
@@ -2221,28 +2935,47 @@ async function openPlazaPost(postId, sort, page, month, countView = true) {
       alert(error.message);
     }
   };
-  let commentPage = 1;
+
   const moreComments = root.querySelector('#moreComments');
-  if (moreComments) moreComments.onclick = async (event) => {
+  moreComments.onclick = async (event) => {
     const restoreButton = beginButtonLoading(event.currentTarget, '加载中…');
     try {
-      commentPage += 1;
-      const next = await api(`/api/plaza/${postId}/comments?page=${commentPage}&limit=10`);
-      root.querySelector('#commentList').insertAdjacentHTML('beforeend', next.comments.map((comment) => `
-        <article class="comment-item" data-comment="${comment.id}">
-          <div><strong>${escapeHtml(comment.name)}</strong><span class="muted">${formatDate(comment.createdAt)}</span></div>
-          <p>${escapeHtml(comment.content)}</p>
-          ${comment.canDelete ? '<button class="link-button delete-comment">删除</button>' : ''}
-        </article>`).join(''));
+      const nextPage = commentPage + 1;
+      const next = await api(`/api/plaza/${postId}/comments?page=${nextPage}&limit=10`);
+      commentPage = nextPage;
+      renderComments(next, true);
       restoreButton();
-      moreComments.hidden = !next.hasMore;
-      bindDeleteComments();
     } catch (error) {
-      commentPage = Math.max(1, commentPage - 1);
       restoreButton();
       alert(error.message);
     }
   };
+
+  requestAnimationFrame(() => {
+    setTimeout(() => {
+      const viewKey = scopedCacheKey('plaza-view', postId);
+      if (!countView || countedPlazaViews.has(viewKey)) return;
+      countedPlazaViews.add(viewKey);
+      void api(`/api/plaza/${postId}/view`, { method: 'POST' })
+        .then((result) => {
+          if (!result.counted) return;
+          const nextViewCount = Number(post.viewCount || 0) + 1;
+          post.viewCount = nextViewCount;
+          patchPlazaPostCache(postId, { viewCount: nextViewCount });
+          updatePlazaCachePost(postId, { viewCount: nextViewCount });
+          updateVisiblePlazaCard(postId, { viewCount: nextViewCount });
+          const detailCount = root.querySelector('[data-detail-views]');
+          if (detailCount) detailCount.textContent = nextViewCount;
+          rankingViewCache.clear();
+        })
+        .catch(() => {});
+    }, 0);
+  });
+
+  void commentsPromise.then(({ result, error }) => {
+    if (error) showCommentsError(error);
+    else renderComments(result);
+  });
 }
 
 function checkinForm(slotId) {
@@ -2288,6 +3021,9 @@ function checkinForm(slotId) {
   };
 }
 
+/* ADMIN_DASHBOARD_REFACTOR_V1 */
+/* STUDENT_ADMIN_FLOW_V2 */
+
 /* ADMIN_CLIENT_LAZY_LOADER_V1 */
 let adminClientModulePromise = null;
 const loadAdminClient = (selectedDate, pageEpoch) => {
@@ -2318,3 +3054,45 @@ const loadAdminClient = (selectedDate, pageEpoch) => {
 if (window.__BOOTSTRAP_AUTHENTICATED__) home().catch(logout);
 else if (token) api('/api/session', { method: 'POST' }).catch(() => null).then(home).catch(logout);
 else login();
+
+/* LAZY_HEALTH_CLIENT_MODULE_V1 */
+let healthClientModulePromise = null;
+const loadHealthClientModule = () => {
+  if (user?.role !== 'student' || user.trackId !== 'health') return Promise.resolve(false);
+  if (healthClientModulePromise) return healthClientModulePromise;
+  const appScript = [...document.scripts].find((script) => /\/app\.js(?:\?|$)/.test(script.src));
+  const version = appScript ? new URL(appScript.src, location.href).searchParams.get('v') : '';
+  const moduleUrl = new URL('/health-checkin.js', location.origin);
+  if (version) moduleUrl.searchParams.set('v', version);
+  const startedAt = performance.now();
+  healthClientModulePromise = new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-health-checkin-module]');
+    if (existing?.dataset.loaded === 'true') { resolve(true); return; }
+    const script = existing || document.createElement('script');
+    script.dataset.healthCheckinModule = 'true';
+    script.async = true;
+    script.src = moduleUrl.href;
+    script.onload = () => { script.dataset.loaded = 'true'; resolve(true); };
+    script.onerror = () => reject(new Error('健康打卡模块加载失败'));
+    if (!existing) document.head.appendChild(script);
+  })
+    .then((loaded) => {
+      recordPerf('module-load', { module: 'health-checkin', status: 'ready', duration: roundedDuration(startedAt) });
+      return loaded;
+    })
+    .catch((error) => {
+      recordPerf('module-load', { module: 'health-checkin', status: 'failed', duration: roundedDuration(startedAt), message: error.message });
+      const section = document.querySelector('#activityTasks');
+      if (section && document.body.dataset.view === 'student') {
+        section.innerHTML = '<div class="row"><h2>今日打卡</h2><span class="right muted">加载失败</span></div><p class="bad">健康打卡模块加载失败，请重新进入。</p>';
+      }
+      healthClientModulePromise = null;
+      return false;
+    });
+  return healthClientModulePromise;
+};
+if (user?.role === 'student' && user.trackId === 'health') void loadHealthClientModule();
+
+/* APPROVED_MOBILE_EXPERIENCE_FRONTEND_V1 */
+
+/* TRACK_AWARE_ADMIN_SETTINGS_V1 */

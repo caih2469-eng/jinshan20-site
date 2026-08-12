@@ -77,9 +77,12 @@ test('detail image and comment scheduling prioritize visible high-quality post c
 });
 
 test('fresh plaza cache renders first and delays refresh so images keep the critical bandwidth', () => {
+  const plazaStart = app.indexOf("async function plaza(");
+  const plazaEnd = app.indexOf("\nfunction rankingTable", plazaStart);
+  const plazaFunction = app.slice(plazaStart, plazaEnd);
   assert.match(app, /const VIEW_CACHE_TTL_MS = 60_000/);
-  assert.match(app, /setTimeout\(\(\) => \{ void refresh\(\); \}, 3200\)/);
-  assert.doesNotMatch(app, /cacheIsFresh\(cached\)\) queueMicrotask\(\(\) => \{ void refresh\(\); \}\)/);
+  assert.match(plazaFunction, /setTimeout\(\(\) => \{ void refresh\(\); \}, 3200\)/);
+  assert.doesNotMatch(plazaFunction, /cacheIsFresh\(cached\)\) queueMicrotask\(\(\) => \{ void refresh\(\); \}\)/);
   assert.match(plazaPageTemplate, /setTimeout\(\(\) => \{ void refresh\(\); \}, 3200\)/);
 });
 
