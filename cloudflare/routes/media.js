@@ -7,9 +7,11 @@ import {
   cleanText,
   hasMakeupPermission,
   json,
+  isD1OverloadedError,
   nowIso,
   readConfig,
   readJson,
+  retryD1Overload,
   requireUser,
   shanghaiDate
 } from '../lib/runtime.js';
@@ -273,7 +275,7 @@ const memberFastUpload = async (request, env) => {
         || object.customMetadata?.sha256 !== digest) {
       throw Object.assign(new Error('R2图片校验失败，请重新上传'), { status: 409 });
     }
-    const results = await env.DB.batch([
+    const statements = [
       env.DB.prepare(
         `INSERT OR IGNORE INTO media_upload_intents
           (id,user_id,task_id,business_type,object_key,mime_type,expected_size,width,height,status,
@@ -296,7 +298,12 @@ const memberFastUpload = async (request, env) => {
             AND status='pending'`
       ).bind(now, idempotencyKey, auth.user.id, task.id, objectKey, mimeType,
         buffer.byteLength, width, height)
-    ]);
+    ];
+    const results = await retryD1Overload(() => env.DB.batch(statements), {
+      maxAttempts: 3,
+      baseDelayMs: 500,
+      maxDelayMs: 2_000
+    });
     if (!results[2]?.meta?.changes) {
       const recovered = await env.DB.prepare(
         `SELECT m.id,m.owner_user_id AS ownerUserId,m.task_id AS taskId,
@@ -331,7 +338,11 @@ const memberFastUpload = async (request, env) => {
       })
     }, 201);
   } catch (error) {
-    if (wroteNewObject) await env.UPLOADS.delete(objectKey).catch(() => null);
+    // An overloaded D1 request can have committed before the response was lost.
+    // Keep the deterministic R2 object so the same idempotency key can recover it.
+    if (wroteNewObject && !isD1OverloadedError(error)) {
+      await env.UPLOADS.delete(objectKey).catch(() => null);
+    }
     throw error;
   }
 };

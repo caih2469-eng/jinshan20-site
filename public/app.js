@@ -465,7 +465,7 @@ const parseApiResponse = async (response) => {
 };
 
 const apiRequest = async (url, options, method) => {
-  const { timeoutMs: requestedTimeout, ...fetchOptions } = options;
+  const { timeoutMs: requestedTimeout, retryOverload: _retryOverload, ...fetchOptions } = options;
   const headers = new Headers(options.headers || {});
   const body = options.body;
   if (token && !headers.has('authorization')) headers.set('authorization', `Bearer ${token}`);
@@ -505,25 +505,40 @@ const apiRequest = async (url, options, method) => {
 
 const executeApi = async (url, options, method) => {
   const retryableMethod = method === 'GET' || method === 'HEAD';
+  const retryOverload = Boolean(options.retryOverload);
+  const maxAttempts = retryOverload ? 8 : (retryableMethod ? 2 : 1);
   const startedAt = performance.now();
   let retryCount = 0;
   let status = 0;
   let requestId = '';
   try {
-    for (let attempt = 0; attempt < (retryableMethod ? 2 : 1); attempt += 1) {
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       retryCount = attempt;
       let response;
       try {
         response = await apiRequest(url, options, method);
       } catch (error) {
-        if (!retryableMethod || attempt > 0 || !/网络连接失败/.test(error.message)) throw error;
-        await wait(300 + Math.floor(Math.random() * 301));
+        const retryNetwork = (retryableMethod && attempt === 0 && /网络连接失败/.test(error.message))
+          || (retryOverload && attempt < maxAttempts - 1);
+        if (!retryNetwork) throw error;
+        const retryDelay = retryOverload
+          ? Math.floor(Math.random() * (Math.min(15_000, 1_000 * (2 ** attempt)) + 1))
+          : 300 + Math.floor(Math.random() * 301);
+        await wait(retryDelay);
         continue;
       }
       status = response.status;
       requestId = response.headers.get('x-request-id') || '';
-      if (attempt === 0 && retryableMethod && [502, 503, 504].includes(response.status)) {
-        await wait(300 + Math.floor(Math.random() * 301));
+      const transientReadFailure = attempt === 0 && retryableMethod
+        && [502, 503, 504].includes(response.status);
+      const transientOverload = retryOverload && attempt < maxAttempts - 1
+        && [429, 503].includes(response.status);
+      if (transientReadFailure || transientOverload) {
+        await response.body?.cancel().catch(() => null);
+        const retryDelay = transientOverload
+          ? Math.floor(Math.random() * (Math.min(15_000, 1_000 * (2 ** attempt)) + 1))
+          : 300 + Math.floor(Math.random() * 301);
+        await wait(retryDelay);
         continue;
       }
       const result = await parseApiResponse(response);
@@ -1127,35 +1142,50 @@ const createIdempotencyKey = () => {
 };
 
 const uploadMemberCheckinFast = async (image, taskId, idempotencyKey, signal) => {
-  let response;
-  try {
-    response = await uploadBinary('/api/media/member-checkin-fast', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        'Content-Type': image.mimeType,
-        'X-Task-Id': taskId,
-        'X-Image-Width': String(image.width),
-        'X-Image-Height': String(image.height),
-        'X-Idempotency-Key': idempotencyKey
-      },
-      body: image.file,
-      signal
-    });
-  } catch (error) {
-    if (signal?.aborted) throw error;
-    throw new Error('图片上传失败，请检查网络后点击重试。');
-  }
-  const payload = await parseApiResponse(response);
-  if (!response.ok) {
-    if ([500, 501, 502, 503, 504].includes(response.status)) {
-      throw new Error('上传服务暂时不可用，请稍后重试。');
+  const maxAttempts = 8;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    let response;
+    try {
+      response = await uploadBinary('/api/media/member-checkin-fast', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          'Content-Type': image.mimeType,
+          'X-Task-Id': taskId,
+          'X-Image-Width': String(image.width),
+          'X-Image-Height': String(image.height),
+          'X-Idempotency-Key': idempotencyKey
+        },
+        body: image.file,
+        signal
+      });
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      if (attempt === maxAttempts - 1) {
+        throw new Error('图片上传失败，请检查网络后点击重试。');
+      }
+      const ceiling = Math.min(15_000, 1_000 * (2 ** attempt));
+      await wait(Math.floor(Math.random() * (ceiling + 1)));
+      continue;
     }
-    throw new Error(payload?.error || '图片上传失败，请点击重试。');
+    if (attempt < maxAttempts - 1 && [429, 503].includes(response.status)) {
+      await response.body?.cancel().catch(() => null);
+      const ceiling = Math.min(15_000, 1_000 * (2 ** attempt));
+      await wait(Math.floor(Math.random() * (ceiling + 1)));
+      continue;
+    }
+    const payload = await parseApiResponse(response);
+    if (!response.ok) {
+      if ([500, 501, 502, 503, 504].includes(response.status)) {
+        throw new Error('上传服务暂时不可用，请稍后重试。');
+      }
+      throw new Error(payload?.error || '图片上传失败，请点击重试。');
+    }
+    if (!payload?.media?.id) throw new Error('上传服务返回的数据无效，请点击重试。');
+    return { ...image, mediaId: payload.media.id, repeated: Boolean(payload.repeated) };
   }
-  if (!payload?.media?.id) throw new Error('上传服务返回的数据无效，请点击重试。');
-  return { ...image, mediaId: payload.media.id, repeated: Boolean(payload.repeated) };
+  throw new Error('上传服务暂时不可用，请稍后重试。');
 };
 
 const uploadCompressedImage = async (image, context, signal) => {

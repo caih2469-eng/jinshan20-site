@@ -164,32 +164,67 @@ const summarize = (values) => ({
   maxMs: Number(Math.max(0, ...values).toFixed(1))
 });
 
-const fetchJson = async (url, init = {}) => {
+const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+const fetchJson = async (url, init = {}, retry = {}) => {
   const started = performance.now();
-  try {
-    const response = await fetch(url, { ...init, signal: AbortSignal.timeout(30_000) });
-    const text = await response.text();
-    let body = null;
+  const maxAttempts = Math.max(1, Math.min(12, Number(retry.maxAttempts || 1)));
+  const statuses = [];
+  let lastResult;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     try {
-      body = text ? JSON.parse(text) : null;
-    } catch {
-      body = { raw: text.slice(0, 500) };
+      const response = await fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(Number(retry.timeoutMs || 30_000))
+      });
+      statuses.push(response.status);
+      const text = await response.text();
+      let body = null;
+      try {
+        body = text ? JSON.parse(text) : null;
+      } catch {
+        body = { raw: text.slice(0, 500) };
+      }
+      lastResult = {
+        ok: response.ok,
+        status: response.status,
+        ms: performance.now() - started,
+        body,
+        attempts: attempt + 1,
+        statuses: statuses.slice()
+      };
+      const retryable = [429, 503].includes(response.status)
+        || /D1(?:_ERROR)?:[\s\S]*(?:overload|queued for too long)|D1 DB is overloaded/i
+          .test(String(body?.error || ''));
+      if (response.ok || !retryable || attempt === maxAttempts - 1) return lastResult;
+    } catch (error) {
+      statuses.push(0);
+      lastResult = {
+        ok: false,
+        status: 0,
+        ms: performance.now() - started,
+        error: error instanceof Error ? error.message : String(error),
+        attempts: attempt + 1,
+        statuses: statuses.slice()
+      };
+      if (!retry.retryNetwork || attempt === maxAttempts - 1) return lastResult;
     }
-    return {
-      ok: response.ok,
-      status: response.status,
-      ms: performance.now() - started,
-      body
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      status: 0,
-      ms: performance.now() - started,
-      error: error instanceof Error ? error.message : String(error)
-    };
+    const ceiling = Math.min(
+      Number(retry.maxDelayMs || 15_000),
+      Number(retry.baseDelayMs || 1_000) * (2 ** attempt)
+    );
+    await sleep(Math.floor(Math.random() * (ceiling + 1)));
   }
+  return lastResult;
 };
+
+const writeRetry = Object.freeze({
+  maxAttempts: 10,
+  baseDelayMs: 1_000,
+  maxDelayMs: 15_000,
+  timeoutMs: 120_000,
+  retryNetwork: true
+});
 
 const login = (options, studentId, password) => fetchJson(`${options.baseUrl}/api/login`, {
   method: 'POST',
@@ -236,7 +271,7 @@ const runUserWorkflow = async (options, fixture, metadata, taskId, userNumber) =
 
   const loginResult = await login(options, studentId, options.password);
   result.phases.login = loginResult.ms;
-  result.statuses.push(loginResult.status);
+  result.statuses.push(...loginResult.statuses);
   if (!loginResult.ok || !loginResult.body?.token) {
     result.error = `login:${loginResult.status}:${loginResult.body?.error || loginResult.error || 'unknown'}`;
     return result;
@@ -253,9 +288,10 @@ const runUserWorkflow = async (options, fixture, metadata, taskId, userNumber) =
       'x-idempotency-key': idempotencyKey
     },
     body: fixture
-  });
+  }, writeRetry);
   result.phases.fastUpload = fast.ms;
-  result.statuses.push(fast.status);
+  result.statuses.push(...fast.statuses);
+  result.phases.fastUploadAttempts = fast.attempts;
   if (!fast.ok || fast.body?.media?.id !== idempotencyKey) {
     result.error = `fast:${fast.status}:${fast.body?.error || fast.error || 'unknown'}`;
     return result;
@@ -274,10 +310,12 @@ const runUserWorkflow = async (options, fixture, metadata, taskId, userNumber) =
         'content-type': 'application/json'
       },
       body: JSON.stringify({ occurrenceDate, mediaIds: [idempotencyKey] })
-    }
+    },
+    writeRetry
   );
   result.phases.memberCheckinPut = submit.ms;
-  result.statuses.push(submit.status);
+  result.statuses.push(...submit.statuses);
+  result.phases.memberCheckinPutAttempts = submit.attempts;
   if (!submit.ok) {
     result.error = `put:${submit.status}:${submit.body?.error || submit.error || 'unknown'}`;
     return result;
@@ -287,7 +325,7 @@ const runUserWorkflow = async (options, fixture, metadata, taskId, userNumber) =
     headers: { authorization: `Bearer ${token}` }
   });
   result.phases.queryVerify = verify.ms;
-  result.statuses.push(verify.status);
+  result.statuses.push(...verify.statuses);
   const verified = verify.ok && verify.body?.records?.some(
     (record) => record.date === occurrenceDate
       && Boolean(record.objectKey)
@@ -378,6 +416,10 @@ const main = async () => {
         memberCheckinPut: summarize(results.map((item) => item.phases.memberCheckinPut).filter(Number.isFinite)),
         queryVerify: summarize(results.map((item) => item.phases.queryVerify).filter(Number.isFinite))
       },
+      retryAttempts: {
+        memberCheckinFast: summarize(results.map((item) => item.phases.fastUploadAttempts).filter(Number.isFinite)),
+        memberCheckinPut: summarize(results.map((item) => item.phases.memberCheckinPutAttempts).filter(Number.isFinite))
+      },
       errors: results.filter((item) => !item.ok).slice(0, 10).map((item) => ({
         studentId: item.studentId,
         error: item.error
@@ -399,7 +441,7 @@ const main = async () => {
         'x-idempotency-key': firstSuccess.idempotencyKey
       },
       body: fixture
-    });
+    }, writeRetry);
     const inventoryAfterRepeat = await adminInventory(options, adminToken);
     report.idempotency = {
       status: repeat.status,

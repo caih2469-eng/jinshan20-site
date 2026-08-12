@@ -70,6 +70,7 @@ const createState = () => ({
   objects: new Map(),
   makeup: false,
   failBatch: false,
+  overloadBatches: 0,
   d1Batches: 0,
   puts: 0,
   deletes: 0
@@ -188,6 +189,10 @@ const createEnv = (state) => ({
     async batch(statements) {
       state.d1Batches += 1;
       if (state.failBatch) throw new Error('simulated D1 failure');
+      if (state.overloadBatches > 0) {
+        state.overloadBatches -= 1;
+        throw new Error('D1_ERROR: D1 DB is overloaded. Requests queued for too long.');
+      }
       const results = [];
       for (const statement of statements) results.push(await statement.run());
       return results;
@@ -396,6 +401,17 @@ test('fast接口拒绝超限、PNG、伪造头和超限尺寸，D1失败时清�
       'x-image-width': '961'
     }), env, { waitUntil() {} });
     assert.equal(response.status, 400);
+  }
+  {
+    const { state, env, token } = await make();
+    state.overloadBatches = 2;
+    const response = await worker.fetch(requestFor(token, webpBytes()), env, { waitUntil() {} });
+    assert.equal(response.status, 201);
+    assert.equal(state.d1Batches, 3);
+    assert.equal(state.puts, 1);
+    assert.equal(state.deletes, 0);
+    assert.equal(state.objects.size, 1);
+    assert.equal(state.media.size, 1);
   }
   {
     const { state, env, token } = await make();

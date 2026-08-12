@@ -52,6 +52,31 @@ export const shanghaiTime = (date = new Date()) =>
     hour12: false
   }).format(date);
 
+const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+export const isD1OverloadedError = (error) => {
+  const message = String(error?.message || error || '');
+  return /D1(?:_ERROR)?:[\s\S]*(?:overload|queued for too long)|D1 DB is overloaded/i.test(message);
+};
+
+export const retryD1Overload = async (operation, options = {}) => {
+  const maxAttempts = Math.min(6, Math.max(1, Number(options.maxAttempts || 5)));
+  const baseDelayMs = Math.min(1_000, Math.max(25, Number(options.baseDelayMs || 250)));
+  const maxDelayMs = Math.min(8_000, Math.max(baseDelayMs, Number(options.maxDelayMs || 4_000)));
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await operation(attempt);
+    } catch (error) {
+      lastError = error;
+      if (!isD1OverloadedError(error) || attempt === maxAttempts) throw error;
+      const ceiling = Math.min(maxDelayMs, baseDelayMs * (2 ** (attempt - 1)));
+      await sleep(Math.floor(Math.random() * (ceiling + 1)));
+    }
+  }
+  throw lastError;
+};
+
 const makeupPermissionReady = new WeakMap();
 export const ensureMakeupPermissions = (env) => {
   if (!makeupPermissionReady.has(env)) {
@@ -374,5 +399,11 @@ export const audit = (env, actor, action, entityType, entityId = null, metadata 
 
 export const errorResponse = (error) => {
   console.error(JSON.stringify({ level: 'error', message: error?.message, stack: error?.stack }));
-  return json({ error: error?.message || '请求失败' }, Number(error?.status || error?.statusCode || 500));
+  const overloaded = isD1OverloadedError(error);
+  const status = overloaded ? 503 : Number(error?.status || error?.statusCode || 500);
+  return json(
+    { error: overloaded ? '数据服务繁忙，请稍后重试。' : (error?.message || '请求失败') },
+    status,
+    overloaded ? { 'retry-after': '1', 'x-retry-reason': 'd1-overloaded' } : {}
+  );
 };

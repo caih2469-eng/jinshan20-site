@@ -12,6 +12,7 @@ import {
   nowIso,
   readConfig,
   readJson,
+  retryD1Overload,
   requireUser,
   shanghaiDate,
   shanghaiTime,
@@ -338,13 +339,26 @@ export const handleStudentRoutes = async (request, env, ctx, url, authenticatedU
     }
     const imageLimit = Math.min(8, Math.max(1,
       Number(effectiveTask.memberImageLimit || effectiveTask.imageLimit) || 1));
-    const uploaded = await claimConfirmedMedia(
-      env, body.mediaIds, user, task.id, 'member-checkin', imageLimit, { loadThumb: false }
-    );
+    const requestedMediaIds = [...new Set((body.mediaIds || [])
+      .map((value) => cleanText(value, 80)).filter(Boolean))];
     const old = await env.DB.prepare(
       `SELECT id,object_key AS legacyObjectKey FROM member_checkins
         WHERE task_id=?1 AND occurrence_date=?2 AND user_id=?3`
     ).bind(task.id, occurrenceDate, user.id).first();
+    if (old?.id && requestedMediaIds.length) {
+      const placeholders = requestedMediaIds.map((_, index) => `?${index + 3}`).join(',');
+      const alreadyClaimed = await env.DB.prepare(
+        `SELECT id FROM media_objects
+          WHERE business_id=?1 AND owner_user_id=?2 AND business_type='member-checkin'
+            AND id IN (${placeholders})`
+      ).bind(old.id, user.id, ...requestedMediaIds).all();
+      if (alreadyClaimed.results.length === requestedMediaIds.length) {
+        return json({ ok: true, repeated: true, occurrenceDate, imageCount: requestedMediaIds.length });
+      }
+    }
+    const uploaded = await claimConfirmedMedia(
+      env, body.mediaIds, user, task.id, 'member-checkin', imageLimit, { loadThumb: false }
+    );
     const oldMedia = old?.id ? await env.DB.prepare(
       `SELECT m.id,m.object_key AS objectKey,tm.id AS thumbMediaId,tm.object_key AS thumbObjectKey
          FROM media_objects m
@@ -386,7 +400,11 @@ export const handleStudentRoutes = async (request, env, ctx, url, authenticatedU
           (source_type,source_id,variant,object_key,content_type,bytes,created_at)
          VALUES ('member_checkin',?1,'display',?2,?3,?4,?5)`
       ).bind(id, uploaded[0].objectKey, uploaded[0].contentType, uploaded[0].bytes, submittedAt));
-      await env.DB.batch(statements);
+      await retryD1Overload(() => env.DB.batch(statements), {
+        maxAttempts: 3,
+        baseDelayMs: 500,
+        maxDelayMs: 2_000
+      });
       const staleKeys = oldMedia.results.flatMap((item) => [
         item.objectKey,
         ...(item.thumbObjectKey ? [item.thumbObjectKey] : [])
