@@ -182,6 +182,14 @@ test('internal check-in request reuses the existing route contract', async () =>
   assert.equal(response.headers.get('x-jinshan-service-version'), 'checkin-v1');
 });
 
+test('independent check-in Worker retries the complete idempotent member PUT on D1 overload', () => {
+  const source = read('cloudflare/checkin-worker.js');
+  assert.match(source, /retryD1Overload/);
+  assert.match(source, /memberCheckinWrite/);
+  assert.match(source, /handleStudentRoutes\(request\.clone\(\), env, ctx, url, user\)/);
+  assert.match(source, /maxAttempts:\s*5/);
+});
+
 test('main Worker forwards only check-in routes and keeps safe fallback semantics', () => {
   const allowlistBlock = mainWorkerSource.slice(
     mainWorkerSource.indexOf('const isCheckinServiceRoute'),

@@ -1,4 +1,4 @@
-import { errorResponse, json } from './lib/runtime.js';
+import { errorResponse, json, retryD1Overload } from './lib/runtime.js';
 import { verifyMediaSigningAlignmentProof } from './lib/media-signing.js';
 import { handleStudentRoutes } from './routes/student.js';
 
@@ -98,7 +98,14 @@ export default {
       if (!user) {
         return serviceResponse(json({ error: '禁止直接访问打卡内部服务' }, 403));
       }
-      const response = await handleStudentRoutes(request, env, ctx, url, user);
+      const memberCheckinWrite = request.method === 'PUT'
+        && /^\/api\/tasks\/[^/]+\/member-checkin$/.test(url.pathname);
+      const response = memberCheckinWrite
+        ? await retryD1Overload(
+          () => handleStudentRoutes(request.clone(), env, ctx, url, user),
+          { maxAttempts: 5, baseDelayMs: 500, maxDelayMs: 8_000 }
+        )
+        : await handleStudentRoutes(request, env, ctx, url, user);
       return serviceResponse(response || json({ error: '接口不存在' }, 404));
     } catch (error) {
       return serviceResponse(errorResponse(error));
