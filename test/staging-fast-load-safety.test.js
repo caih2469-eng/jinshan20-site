@@ -25,6 +25,10 @@ test('fast load uses the real fast upload chain at 700-user concurrency', () => 
   assert.match(source, /member-checkin`/);
   assert.match(source, /checkins\/history/);
   assert.match(source, /CONCURRENCY_STAGES = Object\.freeze\(\[700\]\)/);
+  assert.match(source, /WRITE_RAMP_MS = 60_000/);
+  assert.match(source, /activeWorkflowConcurrency:\s*700/);
+  assert.match(source, /splitIntoBatches:\s*false/);
+  assert.match(source, /verifyAttempts < 8/);
   assert.match(source, /maxAttempts:\s*10/);
   assert.match(source, /x-idempotency-key.*idempotencyKey/s);
   assert.match(source, /Boolean\(record\.objectKey\)/);

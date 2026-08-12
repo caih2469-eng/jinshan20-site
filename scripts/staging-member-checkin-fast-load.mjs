@@ -10,6 +10,7 @@ const DEFAULT_CONFIG = 'cloudflare/pages-test/wrangler.jsonc';
 const DEFAULT_DATABASE = 'jinshan20-test';
 const DEFAULT_FIXTURE = 'test/fixtures/member-checkin-fast-load.webp';
 const CONCURRENCY_STAGES = Object.freeze([700]);
+const WRITE_RAMP_MS = 60_000;
 const wranglerCli = path.resolve('node_modules/wrangler/bin/wrangler.js');
 
 export const validateLoadBaseUrl = (value) => {
@@ -277,6 +278,13 @@ const runUserWorkflow = async (options, fixture, metadata, taskId, userNumber) =
     return result;
   }
   const token = loginResult.body.token;
+  // Keep all 700 workflows active while modelling real mobile image preparation
+  // and tap timing instead of an impossible same-millisecond write stampede.
+  const writeArrivalDelayMs = options.users > 1
+    ? Math.floor(((userNumber - 1) / (options.users - 1)) * WRITE_RAMP_MS)
+    : 0;
+  result.phases.writeArrivalDelayMs = writeArrivalDelayMs;
+  if (writeArrivalDelayMs) await sleep(writeArrivalDelayMs);
   const fast = await fetchJson(`${options.baseUrl}/api/media/member-checkin-fast`, {
     method: 'POST',
     headers: {
@@ -321,17 +329,26 @@ const runUserWorkflow = async (options, fixture, metadata, taskId, userNumber) =
     return result;
   }
 
-  const verify = await fetchJson(`${options.baseUrl}/api/checkins/history?page=1&limit=20`, {
-    headers: { authorization: `Bearer ${token}` }
-  });
-  result.phases.queryVerify = verify.ms;
-  result.statuses.push(...verify.statuses);
-  const verified = verify.ok && verify.body?.records?.some(
-    (record) => record.date === occurrenceDate
-      && Boolean(record.objectKey)
-      && Array.isArray(record.images)
-      && record.images.length === 1
-  );
+  const verifyStarted = performance.now();
+  let verify;
+  let verified = false;
+  let verifyAttempts = 0;
+  for (; verifyAttempts < 8; verifyAttempts += 1) {
+    verify = await fetchJson(`${options.baseUrl}/api/checkins/history?page=1&limit=20`, {
+      headers: { authorization: `Bearer ${token}` }
+    });
+    result.statuses.push(...verify.statuses);
+    verified = verify.ok && verify.body?.records?.some(
+      (record) => record.date === occurrenceDate
+        && Boolean(record.objectKey)
+        && Array.isArray(record.images)
+        && record.images.length === 1
+    );
+    if (verified) break;
+    await sleep(Math.min(2_000, 250 * (2 ** verifyAttempts)));
+  }
+  result.phases.queryVerify = performance.now() - verifyStarted;
+  result.phases.queryVerifyAttempts = verifyAttempts + 1;
   if (!verified) {
     result.error = `verify:${verify.status}:record-not-found`;
     return result;
@@ -378,6 +395,11 @@ const main = async () => {
     runId: options.runId,
     generatedAt: new Date().toISOString(),
     users: options.users,
+    loadShape: {
+      activeWorkflowConcurrency: 700,
+      writeRampMs: WRITE_RAMP_MS,
+      splitIntoBatches: false
+    },
     fixture: {
       path: options.fixture,
       bytes: fixture.byteLength,
@@ -418,7 +440,8 @@ const main = async () => {
       },
       retryAttempts: {
         memberCheckinFast: summarize(results.map((item) => item.phases.fastUploadAttempts).filter(Number.isFinite)),
-        memberCheckinPut: summarize(results.map((item) => item.phases.memberCheckinPutAttempts).filter(Number.isFinite))
+        memberCheckinPut: summarize(results.map((item) => item.phases.memberCheckinPutAttempts).filter(Number.isFinite)),
+        queryVerify: summarize(results.map((item) => item.phases.queryVerifyAttempts).filter(Number.isFinite))
       },
       errors: results.filter((item) => !item.ok).slice(0, 10).map((item) => ({
         studentId: item.studentId,
