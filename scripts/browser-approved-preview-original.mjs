@@ -277,12 +277,19 @@ const runBrowserAcceptance = async (baseUrl, studentLogin) => {
     const homeChecks = await client.evaluate(`(() => ({
       shortcutIds: [...document.querySelectorAll('.student-shortcuts button')].map((item) => item.id || item.dataset.jump || ''),
       hasFinalProof: document.body.innerText.includes('最终截图证明'),
+      hasProfile: document.body.innerText.includes('我的资料'),
+      hasRanking: document.body.innerText.includes('查看排行榜'),
+      hasTeamMemberCard: Boolean(document.querySelector('#myTeam')) && document.querySelector('#myTeam')?.innerText.includes('队伍成员'),
+      hasTeamMetadata: ['队伍名称', '邀请码', '成员人数'].some((text) => document.querySelector('#myTeam')?.innerText.includes(text)),
+      hasTodayCheckin: Boolean(document.querySelector('#activityTasks')),
       hasPersonalTotal: document.body.innerText.includes('个人累计打卡'),
       hasTeamTotal: document.body.innerText.includes('队伍累计'),
       title: document.querySelector('.student-hero h1')?.textContent || ''
     }))()`);
     if (homeChecks.shortcutIds.length !== 4) throw new Error(`首页快捷入口不是4项：${homeChecks.shortcutIds.join(',')}`);
-    if (homeChecks.hasFinalProof) throw new Error('首页仍存在“最终截图证明”');
+    if (homeChecks.hasFinalProof || homeChecks.hasProfile || homeChecks.hasRanking) throw new Error(`首页仍存在指定删除模块：${JSON.stringify(homeChecks)}`);
+    if (!homeChecks.hasTeamMemberCard || homeChecks.hasTeamMetadata) throw new Error(`队伍区域没有仅保留成员：${JSON.stringify(homeChecks)}`);
+    if (!homeChecks.hasTodayCheckin) throw new Error('首页“今日打卡”被误删');
     if (!homeChecks.hasPersonalTotal || !homeChecks.hasTeamTotal) throw new Error('首页累计打卡信息缺失');
     if (homeChecks.title !== '廿载同心，青春同行') throw new Error(`首页主题异常：${homeChecks.title}`);
 
@@ -320,7 +327,19 @@ const runBrowserAcceptance = async (baseUrl, studentLogin) => {
     if (viewer.viewerZ <= viewer.modalZ) throw new Error(`原图层级没有高于详情层：${viewer.viewerZ} <= ${viewer.modalZ}`);
     await client.evaluate(`document.querySelector('[data-image-close]')?.click()`);
     await waitFor(client, `!document.querySelector('.image-viewer') && Boolean(document.querySelector('.plaza-detail'))`, 10_000, '关闭原图后保留详情');
-    await client.evaluate(`document.querySelector('#closePost')?.click(); document.querySelector('#backHome')?.click();`);
+    await client.evaluate(`document.querySelector('#closePost')?.click();`);
+    const plazaReturn = await waitFor(client, `(() => {
+      if (document.body.dataset.view !== 'plaza' || !document.querySelector('#backHome')) return null;
+      return {
+        query: document.querySelector('#plazaSearchInput')?.value || '',
+        searchHidden: Boolean(document.querySelector('#plazaSearchPanel')?.hidden),
+        url: location.href
+      };
+    })()`, 15_000, '详情返回活动广场原位置');
+    if (plazaReturn.query || !plazaReturn.searchHidden || plazaReturn.url.includes('plazaPost=')) {
+      throw new Error(`详情返回后错误进入搜索状态：${JSON.stringify(plazaReturn)}`);
+    }
+    await client.evaluate(`document.querySelector('#backHome')?.click();`);
     await waitFor(client, `Boolean(document.querySelector('#plaza'))`, 15_000, '返回首页');
 
     await client.evaluate(`window.__BROWSER_PLAZA_HOT_STARTED__ = performance.now(); document.querySelector('#plaza').click();`);

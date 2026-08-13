@@ -65,6 +65,51 @@ fixture.users.push({
   status: 'active',
   createdAt: new Date().toISOString()
 });
+fixture.users.push({
+  id: 'device-matrix-interaction',
+  studentId: 'demo-interaction',
+  name: '互动赛道测试用户',
+  password: 'Demo123!',
+  role: 'student',
+  campus: '福州',
+  trackId: 'interaction',
+  status: 'active',
+  createdAt: new Date().toISOString()
+}, {
+  id: 'device-matrix-teammate',
+  studentId: 'demo-teammate',
+  name: '互动赛道队友',
+  password: 'Demo123!',
+  role: 'student',
+  campus: '安溪',
+  trackId: 'interaction',
+  status: 'active',
+  createdAt: new Date().toISOString()
+});
+fixture.teams.push({
+  id: 'device-matrix-team',
+  name: '不应显示的队伍名称',
+  memberLimit: 4,
+  memberIds: ['device-matrix-interaction', 'device-matrix-teammate'],
+  captainId: 'device-matrix-interaction',
+  inviteCode: 'HIDDEN88',
+  createdAt: new Date().toISOString()
+});
+fixture.plazaPosts.push({
+  id: 'device-matrix-post',
+  taskId: 'device-matrix-task',
+  taskName: '活动广场返回测试',
+  teamId: 'device-matrix-team',
+  teamName: '互动赛道测试队伍',
+  members: [{ name: '互动赛道测试用户', campus: '福州' }, { name: '互动赛道队友', campus: '安溪' }],
+  images: [],
+  copy: '详情返回后应保持活动广场列表状态',
+  publisherName: '互动赛道测试用户',
+  publishedAt: new Date().toISOString(),
+  viewCount: 0,
+  status: 'visible',
+  excludedFromRanking: false
+});
 fs.writeFileSync(path.join(fixtureDataDir, 'db.json'), JSON.stringify(fixture, null, 2), 'utf8');
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'checkin-device-'));
 const port = 9331;
@@ -131,30 +176,60 @@ const commandClient = (socket) => {
       { name: '电脑', width: 1440, height: 900, mobile: false, userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36' },
       { name: '微信浏览器', width: 390, height: 844, mobile: true, userAgent: 'Mozilla/5.0 (Linux; Android 13; wv) AppleWebKit/537.36 Version/4.0 Chrome/116 Mobile Safari/537.36 MicroMessenger/8.0.47 WeChat/arm64' }
     ];
+    const personas = [
+      { name: '健康赛道', studentId: 'demo-health', expectsTeamMembers: false },
+      { name: '互动赛道', studentId: 'demo-interaction', expectsTeamMembers: true }
+    ];
     const results = [];
-    for (const device of devices) {
-      await send('Emulation.setDeviceMetricsOverride', { width: device.width, height: device.height, deviceScaleFactor: 1, mobile: device.mobile });
-      await send('Network.setUserAgentOverride', { userAgent: device.userAgent });
-      await send('Page.navigate', { url: `http://127.0.0.1:${appPort}/` });
-      await wait(400);
-      const login = await send('Runtime.evaluate', {
-        awaitPromise: true,
-        returnByValue: true,
-        expression: `(async()=>{const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({studentId:'demo-health',password:'Demo123!'})});const x=await r.json();if(!r.ok)return {ok:false,status:r.status,error:x.error};localStorage.token=x.token;localStorage.user=JSON.stringify(x.user);location.replace('/');return {ok:true};})()`
-      });
-      await send('Runtime.evaluate', {
-        awaitPromise: true,
-        expression: `new Promise((resolve)=>{const started=Date.now();const poll=()=>{if(document.querySelector('#activityTasks')||Date.now()-started>5000)return resolve();setTimeout(poll,50)};poll()})`
-      });
-      const evaluation = await send('Runtime.evaluate', {
-        returnByValue: true,
-        expression: `({title:document.title,hasStudentShell:Boolean(document.querySelector('.student-user-card')),hasCheckin:Boolean(document.querySelector('#activityTasks')),hasHistoryEntries:Boolean(document.querySelector('#historyCheckins')&&document.querySelector('#teamCheckinStats')),hasPlazaEntry:Boolean(document.querySelector('#plaza')),horizontalOverflow:document.documentElement.scrollWidth>window.innerWidth,scrollWidth:document.documentElement.scrollWidth,innerWidth:window.innerWidth})`
-      });
-      results.push({ device: device.name, viewport: `${device.width}x${device.height}`, login: login.result?.result?.value, ...evaluation.result?.result?.value });
-      await send('Runtime.evaluate', { expression: 'localStorage.clear()' });
+    for (const persona of personas) {
+      for (const device of devices) {
+        await send('Emulation.setDeviceMetricsOverride', { width: device.width, height: device.height, deviceScaleFactor: 1, mobile: device.mobile });
+        await send('Network.setUserAgentOverride', { userAgent: device.userAgent });
+        await send('Page.navigate', { url: `http://127.0.0.1:${appPort}/` });
+        await wait(400);
+        const login = await send('Runtime.evaluate', {
+          awaitPromise: true,
+          returnByValue: true,
+          expression: `(async()=>{const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({studentId:${JSON.stringify(persona.studentId)},password:'Demo123!'})});const x=await r.json();if(!r.ok)return {ok:false,status:r.status,error:x.error};localStorage.token=x.token;localStorage.user=JSON.stringify(x.user);location.replace('/');return {ok:true};})()`
+        });
+        await send('Runtime.evaluate', {
+          awaitPromise: true,
+          expression: `new Promise((resolve)=>{const started=Date.now();const poll=()=>{if(document.querySelector('#activityTasks')||Date.now()-started>5000)return resolve();setTimeout(poll,50)};poll()})`
+        });
+        const evaluation = await send('Runtime.evaluate', {
+          returnByValue: true,
+          expression: `({title:document.title,hasStudentShell:Boolean(document.querySelector('.student-user-card')),hasCheckin:Boolean(document.querySelector('#activityTasks')),hasHistoryEntries:Boolean(document.querySelector('#historyCheckins')&&document.querySelector('#teamCheckinStats')),hasPlazaEntry:Boolean(document.querySelector('#plaza')),hasInboxEntry:Boolean(document.querySelector('#inbox')),hasTeamMemberCard:Boolean(document.querySelector('#myTeam'))&&document.querySelector('#myTeam').innerText.includes('队伍成员'),hasTeamMetadata:['队伍名称','邀请码','成员人数'].some((text)=>document.querySelector('#myTeam')?.innerText.includes(text)),hasForbiddenModule:['我的资料','查看排行榜','最终截图证明'].some((text)=>document.body.innerText.includes(text)),horizontalOverflow:document.documentElement.scrollWidth>window.innerWidth,scrollWidth:document.documentElement.scrollWidth,innerWidth:window.innerWidth})`
+        });
+        let plazaReturn = null;
+        if (persona.expectsTeamMembers && device.name === '手机') {
+          await send('Runtime.evaluate', { expression: `document.querySelector('#plaza').click()` });
+          await send('Runtime.evaluate', {
+            awaitPromise: true,
+            expression: `new Promise((resolve)=>{const started=Date.now();const poll=()=>{if(document.querySelector('[data-post]')||Date.now()-started>5000)return resolve();setTimeout(poll,50)};poll()})`
+          });
+          await send('Runtime.evaluate', { expression: `document.querySelector('[data-post]')?.click()` });
+          await send('Runtime.evaluate', {
+            awaitPromise: true,
+            expression: `new Promise((resolve)=>{const started=Date.now();const poll=()=>{if(document.body.dataset.view==='plaza-detail'||Date.now()-started>5000)return resolve();setTimeout(poll,50)};poll()})`
+          });
+          await send('Runtime.evaluate', { expression: `document.querySelector('#closePost')?.click()` });
+          await send('Runtime.evaluate', {
+            awaitPromise: true,
+            expression: `new Promise((resolve)=>{const started=Date.now();const poll=()=>{if(document.body.dataset.view==='plaza'&&document.querySelector('[data-post]')||Date.now()-started>5000)return resolve();setTimeout(poll,50)};poll()})`
+          });
+          const returnEvaluation = await send('Runtime.evaluate', {
+            returnByValue: true,
+            expression: `({view:document.body.dataset.view,hasPost:Boolean(document.querySelector('[data-post]')),query:document.querySelector('#plazaSearchInput')?.value||'',searchHidden:Boolean(document.querySelector('#plazaSearchPanel')?.hidden),hasDetailParam:location.href.includes('plazaPost=')})`
+          });
+          plazaReturn = returnEvaluation.result?.result?.value;
+        }
+        results.push({ track: persona.name, expectsTeamMembers: persona.expectsTeamMembers, device: device.name, viewport: `${device.width}x${device.height}`, login: login.result?.result?.value, plazaReturn, ...evaluation.result?.result?.value });
+        await send('Runtime.evaluate', { expression: 'localStorage.clear()' });
+      }
     }
     console.log(JSON.stringify(results, null, 2));
-    if (results.some((item) => !item.login?.ok || !item.hasStudentShell || !item.hasCheckin || !item.hasHistoryEntries || !item.hasPlazaEntry || item.horizontalOverflow)) process.exitCode = 1;
+    if (results.some((item) => !item.login?.ok || !item.hasStudentShell || !item.hasCheckin || !item.hasHistoryEntries || !item.hasPlazaEntry || !item.hasInboxEntry || item.hasForbiddenModule || item.hasTeamMetadata || item.hasTeamMemberCard !== item.expectsTeamMembers || item.horizontalOverflow
+      || (item.plazaReturn && (item.plazaReturn.view !== 'plaza' || !item.plazaReturn.hasPost || item.plazaReturn.query || !item.plazaReturn.searchHidden || item.plazaReturn.hasDetailParam)))) process.exitCode = 1;
     socket.close();
   } finally {
     browser.kill();

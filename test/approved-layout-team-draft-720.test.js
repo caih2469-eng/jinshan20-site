@@ -21,6 +21,7 @@ test('图片链路使用960px列表图和2048px高清图，旧数据继续使用
 test('用户首页四入口等宽同排并保留个人与队伍历史查看', () => {
   const app = read('public/app.js');
   const style = read('public/style.css');
+  const studentBody = app.match(/async function student\([\s\S]*?\r?\n}\r?\n\r?\nfunction openStudentCheckinHistory/)?.[0] || '';
   assert.match(app, /<strong>个人累计<\/strong>/);
   assert.match(app, /<strong>活动广场<\/strong>/);
   assert.match(app, /<strong>信息箱<\/strong>/);
@@ -29,6 +30,8 @@ test('用户首页四入口等宽同排并保留个人与队伍历史查看', ()
   assert.match(app, /openTeamCheckinHistory/);
   assert.match(app, /\/api\/team-checkins\/history/);
   assert.match(style, /grid-template-columns:\s*repeat\(4,minmax\(0,1fr\)\)/);
+  assert.match(studentBody, /<h2>队伍成员<\/h2>/);
+  assert.doesNotMatch(studentBody, /我的资料|查看排行榜|最终截图证明|team-summary|邀请码/);
 });
 
 test('队伍必须全员完成后才能汇总且只有队长可提交', () => {

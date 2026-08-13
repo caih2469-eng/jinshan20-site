@@ -4,16 +4,23 @@ import fs from 'node:fs';
 
 const read = (path) => fs.readFileSync(path, 'utf8');
 
-test('用户首页仅包含确认的四项同排入口与累计打卡', () => {
+test('用户首页删除指定模块且保留四项入口、队伍成员和今日打卡', () => {
   const app = read('public/app.js');
+  const studentBody = app.match(/async function student\([\s\S]*?\r?\n}\r?\n\r?\nfunction openStudentCheckinHistory/)?.[0] || '';
   assert.match(app, /student-shortcuts-four/);
-  assert.match(app, /id="historyCheckins"/);
-  assert.match(app, /id="plaza"/);
-  assert.match(app, /id="inbox"/);
-  assert.match(app, /id="teamCheckinStats"/);
-  assert.match(app, /个人累计/);
-  assert.match(app, /<h2>最终截图证明<\/h2>/);
-  assert.match(app, /data-material=/);
+  assert.match(studentBody, /id="historyCheckins"/);
+  assert.match(studentBody, /id="plaza"/);
+  assert.match(studentBody, /id="inbox"/);
+  assert.match(studentBody, /id="teamCheckinStats"/);
+  assert.match(studentBody, /个人累计/);
+  assert.match(studentBody, /id="myTeam"/);
+  assert.match(studentBody, /<h2>队伍成员<\/h2>/);
+  assert.match(studentBody, /id="activityTasks"/);
+  assert.match(studentBody, /data-member-task=/);
+  assert.doesNotMatch(studentBody, /我的资料|查看排行榜|最终截图证明/);
+  assert.doesNotMatch(studentBody, /team-summary|队伍名称|邀请码|成员人数|data-material=/);
+  assert.match(app, /function materialSubmissionForm\(task\)/, '仅从学生首页移除截图入口，不应删除底层管理能力');
+  assert.match(app, /async function rankings\(/, '仅从学生首页移除排行榜入口，不应删除底层管理能力');
 });
 
 test('活动广场、历史打卡和管理员列表图统一使用960px Pica链路', () => {
