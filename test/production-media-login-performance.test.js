@@ -307,9 +307,8 @@ test('阶段B Cloudflare学生会话不泄露密码字段，健康赛道不会�
   assert.equal(payload.user.id, user.id);
   assert.equal(payload.dashboard.version, 1);
   assert.deepEqual(payload.dashboard.tasks, []);
-  assert.deepEqual(payload.dashboard.teamMembers, []);
-  assert.equal('materialTasks' in payload.dashboard, false);
-  assert.equal('checkinStats' in payload.dashboard, false);
+  assert.deepEqual(payload.dashboard.materialTasks, []);
+  assert.equal(payload.dashboard.teamSummary, null);
   assert.equal('password' in payload.user, false);
   assert.equal('passwordHash' in payload.user, false);
   assert.equal(JSON.stringify(payload).includes('passwordHash'), false);

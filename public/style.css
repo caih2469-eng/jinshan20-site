@@ -1639,8 +1639,3 @@ body[data-view="plaza-detail"] #app{max-width:980px;margin:0 auto;padding-bottom
 .plaza-detail-page{position:static!important;inset:auto!important;transform:none!important;width:min(100%,960px)!important;max-width:960px!important;max-height:none!important;overflow:visible!important;margin:18px auto 32px!important}
 .plaza-detail-page .row:first-child{position:sticky;top:0;z-index:8;padding:10px 0;background:rgba(255,255,255,.94);backdrop-filter:blur(12px)}
 @media(max-width:720px){body[data-view="plaza-detail"] #app{padding:0 12px 28px}.plaza-detail-page{margin:8px auto 24px!important;border-radius:20px!important}}
-
-/* STUDENT_HOME_MINIMAL_SCOPE_V1 */
-.student-shortcuts-minimal{display:grid!important;grid-template-columns:minmax(0,1fr)!important}
-.student-shortcuts-minimal button{min-height:88px!important}
-@media(min-width:560px){.student-shortcuts-minimal{max-width:360px}}

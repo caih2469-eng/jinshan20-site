@@ -4,17 +4,16 @@ import fs from 'node:fs';
 
 const read = (path) => fs.readFileSync(path, 'utf8');
 
-test('两个学生赛道首页只保留活动广场和进入打卡，互动赛道另显示队伍成员', () => {
+test('用户首页仅包含确认的四项同排入口与累计打卡', () => {
   const app = read('public/app.js');
-  const studentBody = app.match(/async function student\([\s\S]*?\n}\n\nfunction openStudentCheckinHistory/)?.[0] || '';
-  assert.match(studentBody, /student-shortcuts-minimal/);
+  assert.match(app, /student-shortcuts-four/);
+  assert.match(app, /id="historyCheckins"/);
   assert.match(app, /id="plaza"/);
-  assert.match(studentBody, /<h2>队伍成员<\/h2>/);
-  assert.match(studentBody, /<h2>进入打卡<\/h2>/);
-  assert.match(studentBody, /data-member-task=/);
-  assert.match(studentBody, /data-task=/);
-  assert.doesNotMatch(studentBody, /我的资料|查看排行榜|我的队伍|最终截图证明|个人累计|队伍累计|信息箱|邀请码/);
-  assert.doesNotMatch(studentBody, /id="(?:historyCheckins|ranking|myTeam|inbox|teamCheckinStats)"/);
+  assert.match(app, /id="inbox"/);
+  assert.match(app, /id="teamCheckinStats"/);
+  assert.match(app, /个人累计/);
+  assert.match(app, /<h2>最终截图证明<\/h2>/);
+  assert.match(app, /data-material=/);
 });
 
 test('活动广场、历史打卡和管理员列表图统一使用960px Pica链路', () => {
@@ -75,14 +74,13 @@ test('管理员可以设置打卡日期时段星期和两类照片数量', () =>
   assert.match(dashboard, /checkinEnabled/);
 });
 
-test('学生首页不再聚合材料和累计统计，只返回任务与必要队伍成员', () => {
+test('累计打卡数据由后端按有效日期去重计算', () => {
   const dashboard = read('cloudflare/services/student-dashboard.js');
-  const loginBuilder = dashboard.match(/export const buildStudentDashboardForLogin[\s\S]*?export const buildStudentDashboard = async/)?.[0] || '';
-  const standardBuilder = dashboard.slice(dashboard.indexOf('export const buildStudentDashboard = async'));
-  assert.match(loginBuilder, /teamMembers/);
-  assert.match(standardBuilder, /teamMembers/);
-  assert.doesNotMatch(loginBuilder, /materialTasks|checkinStats|COUNT\(DISTINCT/);
-  assert.doesNotMatch(standardBuilder, /buildStudentMaterialTasks|buildCheckinStats|materialTasks|checkinStats/);
+  assert.match(dashboard, /COUNT\(DISTINCT checkin_date\)/);
+  assert.match(dashboard, /COUNT\(DISTINCT occurrence_date\)/);
+  assert.match(dashboard, /personalDays/);
+  assert.match(dashboard, /teamDays/);
+  assert.match(dashboard, /status IN \('submitted','approved'\)/);
 });
 
 test('管理员广场详情返回照片并自动显示队伍名称', () => {

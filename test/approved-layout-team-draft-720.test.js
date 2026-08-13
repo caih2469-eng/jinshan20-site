@@ -18,16 +18,17 @@ test('图片链路使用960px列表图和2048px高清图，旧数据继续使用
   assert.match(backfill, /encode\(720, 84\)/);
 });
 
-test('学生首页只有活动广场入口、进入打卡和互动赛道队伍成员', () => {
+test('用户首页四入口等宽同排并保留个人与队伍历史查看', () => {
   const app = read('public/app.js');
-  const css = read('public/style.css');
-  const studentBody = app.match(/async function student\([\s\S]*?\n}\n\nfunction openStudentCheckinHistory/)?.[0] || '';
-  assert.match(studentBody, /<strong>活动广场<\/strong>/);
-  assert.match(studentBody, /<h2>队伍成员<\/h2>/);
-  assert.match(studentBody, /<h2>进入打卡<\/h2>/);
-  assert.match(studentBody, /const isInteraction = user\.trackId === 'interaction'/);
-  assert.doesNotMatch(studentBody, /个人累计|队伍累计|信息箱|查看排行榜|我的资料|最终截图证明/);
-  assert.match(css, /student-shortcuts-minimal/);
+  const style = read('public/style.css');
+  assert.match(app, /<strong>个人累计<\/strong>/);
+  assert.match(app, /<strong>活动广场<\/strong>/);
+  assert.match(app, /<strong>信息箱<\/strong>/);
+  assert.match(app, /<strong>队伍累计<\/strong>/);
+  assert.match(app, /openStudentCheckinHistory/);
+  assert.match(app, /openTeamCheckinHistory/);
+  assert.match(app, /\/api\/team-checkins\/history/);
+  assert.match(style, /grid-template-columns:\s*repeat\(4,minmax\(0,1fr\)\)/);
 });
 
 test('队伍必须全员完成后才能汇总且只有队长可提交', () => {

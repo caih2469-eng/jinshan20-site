@@ -1,4 +1,3 @@
-/* STUDENT_HOME_MINIMAL_SCOPE_V1 */
 /* PLAZA_UNDER_1S_AND_MEMBER_IMAGE_LIMIT_V1 */
 /* PLAZA_DETAIL_INSTANT_OPEN_V2 */
 /* APPROVED_LAYOUT_TEAM_DRAFT_720_V2 */
@@ -1423,7 +1422,7 @@ const validStudentDashboard = (dashboard) =>
   dashboard?.version === 1
   && dashboard.user?.id
   && Array.isArray(dashboard.tasks)
-  && Array.isArray(dashboard.teamMembers);
+  && Array.isArray(dashboard.materialTasks);
 
 const rememberStudentDashboard = (dashboard) => {
   if (studentViewState.userId && studentViewState.userId !== dashboard.user.id) {
@@ -1561,16 +1560,26 @@ async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
   /* STRICT_P95_APP_PREFETCH_V4 */
   /* MOBILE_REAL_UNDER_1S_V5 */
   const startPlazaPrefetch = () => { void prefetchStudentPlaza(); };
+  // Start the lightweight Plaza request alongside home rendering so an immediate tap reuses it.
   void startPlazaPrefetch();
   setTimeout(() => {
     const memberUploadWarmup = () => { void loadImageCompressionLibrary().catch(() => {}); };
     if ('requestIdleCallback' in window) requestIdleCallback(memberUploadWarmup, { timeout: 700 });
     else memberUploadWarmup();
   }, 1100);
-
   const isInteraction = user.trackId === 'interaction';
-  const teamMembers = Array.isArray(dashboard.teamMembers) ? dashboard.teamMembers : [];
-  const taskResult = { tasks: Array.isArray(dashboard.tasks) ? dashboard.tasks : [] };
+  const teamListResult = dashboard.teamSummary;
+  const myTeam = dashboard.teamSummary?.team;
+  const taskResult = { tasks: dashboard.tasks };
+  const checkinStats = dashboard.checkinStats || { personalDays: 0, teamDays: 0 };
+  const materialResult = { tasks: dashboard.materialTasks };
+  const completedTasks = taskResult.tasks.filter((task) =>
+    ['submitted', 'approved'].includes(task.submission?.status) || task.memberCheckin
+  ).length;
+  const taskProgress = taskResult.tasks.length
+    ? Math.round((completedTasks / taskResult.tasks.length) * 100)
+    : 0;
+  const avatarText = [...String(user.name || '同学')].slice(-2).join('');
   app.innerHTML = `
     <header class="student-hero">
       <div class="student-hero-copy">
@@ -1580,19 +1589,52 @@ async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
       </div>
       <button class="student-logout" id="out">退出</button>
     </header>
-    <nav class="student-shortcuts student-shortcuts-minimal" aria-label="常用功能">
+    <section class="student-user-card">
+      <div class="student-avatar" aria-hidden="true">${escapeHtml(avatarText)}</div>
+      <div class="student-user-copy"><span>欢迎回来</span><h2>${escapeHtml(user.name)}</h2><p>${escapeHtml(trackName(user.trackId))} · ${escapeHtml(user.campus)}</p></div>
+      <div class="student-progress student-checkin-total"><strong>${Number(checkinStats.personalDays || 0)}天</strong><span>个人累计打卡</span></div>
+    </section>
+    <nav class="student-shortcuts student-shortcuts-compact student-shortcuts-four" aria-label="常用功能">
+      <button id="historyCheckins"><span>✓</span><strong>个人累计</strong><small>${Number(checkinStats.personalDays || 0)}天 · 查看</small></button>
       <button id="plaza"><span>▦</span><strong>活动广场</strong><small>查看作品</small></button>
+      <button id="inbox"><span>✉</span><strong>信息箱</strong><small>通知评论</small></button>
+      <button id="teamCheckinStats"><span>◇</span><strong>队伍累计</strong><small>${dashboard.teamSummary?.team ? `${Number(checkinStats.teamDays || 0)}天 · 查看` : '未加入'}</small></button>
     </nav>
+    <div class="student-top-actions">
+      <button class="secondary" id="ranking">查看排行榜</button>
+    </div>
+    <section class="card profile-card">
+      <h2>我的资料</h2>
+      <details class="profile-details">
+      <summary>查看完整身份资料</summary>
+      <div class="profile-grid">
+        <div><span>姓名</span><strong>${escapeHtml(user.name)}</strong></div>
+        <div><span>学号</span><strong>${escapeHtml(user.studentId)}</strong></div>
+        <div><span>校区</span><strong>${escapeHtml(user.campus)}</strong></div>
+        <div><span>所属赛道</span><strong>${escapeHtml(trackName(user.trackId))}</strong></div>
+        <div><span>账号状态</span><strong>${escapeHtml(statusLabel(user.status))}</strong></div>
+        <div><span>创建时间</span><strong>${escapeHtml(formatDate(user.createdAt))}</strong></div>
+      </div>
+      <p class="muted">关键身份资料仅可由管理员维护，如有错误请联系活动工作人员。</p>
+      </details>
+    </section>
     ${isInteraction ? `
-      <section class="card" id="teamMembers">
-        <h2>队伍成员</h2>
-        <div class="member-list">${teamMembers.length
-          ? teamMembers.map((member) => `<span>${escapeHtml(member.name)}（${escapeHtml(member.campus)}）</span>`).join('')
-          : '<span class="muted">尚未分配队伍成员</span>'}</div>
+      <section class="card" id="myTeam">
+        <div class="row"><h2>我的队伍</h2><span class="right muted">${teamListResult.teamCount}/${teamListResult.maxTeams} 个队伍</span></div>
+        ${myTeam ? `
+          <div class="team-summary">
+            <div><span>队伍名称</span><strong>${escapeHtml(myTeam.name)}</strong></div>
+            <div><span>邀请码</span><strong class="invite-code">${escapeHtml(myTeam.inviteCode)}</strong></div>
+            <div><span>成员人数</span><strong>${myTeam.memberCount}/${myTeam.memberLimit}</strong></div>
+          </div>
+          <h3>队伍成员</h3>
+          <div class="member-list">${myTeam.members.map((member) => `<span>${escapeHtml(member.name)}（${escapeHtml(member.campus)}）</span>`).join('')}</div>
+        ` : `
+          <p class="muted">你尚未被编入队伍。队伍由管理员统一导入和调整，请联系活动管理员。</p>`}
       </section>
-    ` : ''}
+      ` : ''}
     <div id="modalRoot"></div>`;
-
+  const mealNames = { breakfast: '早餐', lunch: '午餐', dinner: '晚餐' };
   const submissionNames = { draft: '草稿', submitted: '已提交', returned: '退回', approved: '通过' };
   const taskCards = taskResult.tasks.map((task) => `
     <article class="slot activity-task-card">
@@ -1603,16 +1645,29 @@ async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
       ${task.copyRequirement ? `<div class="notice">文案要求：${escapeHtml(task.copyRequirement)}</div>` : ''}
       ${task.submission?.reviewNote ? `<p class="bad">审核意见：${escapeHtml(task.submission.reviewNote)}</p>` : ''}
       ${isInteraction ? `
-        <button data-member-task="${task.id}" ${task.availabilityError ? 'disabled' : ''}>进入打卡</button>
-        ${task.isCaptain ? `<button class="secondary" data-task="${task.id}" ${task.availabilityError || Number(task.teamProgress?.total || 0) === 0 || Number(task.teamProgress?.completed || 0) < Number(task.teamProgress?.total || 0) || ['submitted','approved'].includes(task.submission?.status) ? 'disabled' : ''}>队长汇总提交</button>${Number(task.teamProgress?.total || 0) > 0 && Number(task.teamProgress?.completed || 0) < Number(task.teamProgress?.total || 0) ? '<p class="bad">所有队员完成当天个人打卡后，队长才能汇总提交。</p>' : ''}` : ''}
-      ` : `<button data-task="${task.id}" ${task.availabilityError || ['submitted','approved'].includes(task.submission?.status) ? 'disabled' : ''}>进入打卡</button>`}
+        <div class="team-progress">
+          <div class="row"><strong>队伍个人打卡</strong><span class="right">${task.teamProgress?.completed || 0}/${task.teamProgress?.total || 0}</span></div>
+          <div class="member-list compact">${(task.teamProgress?.members || []).map((member) => `<span class="${member.checked ? 'checked-member' : ''}">${escapeHtml(member.name)} · ${escapeHtml(member.studentId)} ${member.checked ? '✓ 已打卡' : '未打卡'}</span>`).join('')}</div>
+        </div>
+        <button data-member-task="${task.id}" ${task.availabilityError ? 'disabled' : ''}>${task.memberCheckin ? '更新个人打卡' : '个人打卡'}</button>
+        ${task.isCaptain ? `<button class="secondary" data-task="${task.id}" ${task.availabilityError || Number(task.teamProgress?.total || 0) === 0 || Number(task.teamProgress?.completed || 0) < Number(task.teamProgress?.total || 0) || ['submitted','approved'].includes(task.submission?.status) ? 'disabled' : ''}>${task.submission ? '继续编辑队伍作品' : '队长汇总提交'}</button>${Number(task.teamProgress?.total || 0) > 0 && Number(task.teamProgress?.completed || 0) < Number(task.teamProgress?.total || 0) ? '<p class="bad">所有队员完成当天个人打卡后，队长才能汇总提交。</p>' : ''}` : '<p class="muted">队伍作品由管理员指定的队长汇总提交。</p>'}
+      ` : `<button data-task="${task.id}" ${task.availabilityError || ['submitted','approved'].includes(task.submission?.status) ? 'disabled' : ''}>${task.submission ? '继续编辑' : '个人打卡'}</button>`}
       ${task.availabilityError ? `<p class="bad">${escapeHtml(task.availabilityError)}</p>` : ''}
     </article>`).join('');
   app.insertAdjacentHTML('beforeend', `
-    <section class="card" id="activityTasks">
-      <h2>进入打卡</h2>
+    <section class="card" id="activityTasks"><div class="row"><h2>今日打卡</h2><span class="right muted">${isInteraction ? '个人打卡后由队长汇总' : '个人提交'}</span></div>
       <div class="grid">${taskCards || '<p class="muted">当前没有已发布任务</p>'}</div>
-    </section>`);
+    </section>
+    `);
+  const materialStatus = { submitted: '已提交', returned: '退回修改' };
+  app.insertAdjacentHTML('beforeend', `<section class="card"><div class="row"><h2>最终截图证明</h2><span class="right muted">最多 8 张 · 压缩后单张不超过 5MB</span></div>
+    <div class="grid">${materialResult.tasks.map((task) => `<article class="slot">
+      <div class="row"><h2>${escapeHtml(task.title)}</h2><span class="pill ${task.submission?.status === 'submitted' ? 'done' : 'pending'}">${materialStatus[task.submission?.status] || '未提交'}</span></div>
+      <p>${escapeHtml(task.description)}</p><p class="muted">截止：${formatDate(task.deadline)} · 个人提交 · ${task.fileTypes.map((type) => `.${escapeHtml(type)}`).join('、')} · 最多 ${task.fileLimit} 张</p>
+      ${task.submission?.reviewNote ? `<p class="bad">退回原因：${escapeHtml(task.submission.reviewNote)}</p>` : ''}
+      ${task.submission?.files?.length ? `<div>${task.submission.files.map((file) => `<button class="secondary material-download" data-url="${file.downloadUrl}" data-name="${escapeHtml(file.originalName)}">${escapeHtml(file.originalName)}</button>`).join(' ')}</div>` : ''}
+      <button data-material="${task.id}" ${task.submission?.status === 'submitted' ? 'disabled' : ''}>${task.submission?.status === 'returned' ? '修改并重新提交' : '提交材料'}</button>
+    </article>`).join('') || '<p class="muted">暂无材料任务</p>'}</div></section>`);
   prepareDynamicContent(app);
   recordPerf('page-render', {
     page: 'student-home',
@@ -1620,7 +1675,38 @@ async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
     navigationEpoch: pageEpoch
   });
   document.querySelector('#out').onclick = logout;
+  document.querySelector('#historyCheckins').onclick = () => { startPhotoFlow('history'); openStudentCheckinHistory(); };
+  document.querySelector('#ranking').onclick = () => rankings();
   document.querySelector('#plaza').onclick = () => { startPhotoFlow('plaza'); plaza(); };
+  document.querySelector('#inbox').onclick = () => inbox();
+  document.querySelector('#teamCheckinStats').onclick = () => void openTeamCheckinHistory();
+  if (document.querySelector('#createAdmin')) {
+    document.querySelector('#createAdmin').onsubmit = async (event) => {
+      event.preventDefault();
+      const values = Object.fromEntries(new FormData(event.target));
+      try {
+        await api('/api/admin/admins', { method: 'POST', body: JSON.stringify(values) });
+        alert('管理员账号已创建');
+        admin(date);
+      } catch (error) { alert(error.message); }
+    };
+  }
+  document.querySelectorAll('.reject-admin-action').forEach((button) => {
+    button.onclick = async () => {
+      if (!await askConfirm('是否驳回该管理员操作？', '补卡记录将被撤销；审核结果将恢复为待审核状态。')) return;
+      try {
+        await api(`/api/admin/governance/${button.dataset.id}/reject`, {
+          method: 'POST',
+          body: JSON.stringify({ note: '最高管理员驳回' })
+        });
+        alert('该管理员操作已驳回');
+        admin(date);
+      } catch (error) { alert(error.message); }
+    };
+  });
+  document.querySelectorAll('[data-jump]').forEach((button) => {
+    button.onclick = () => document.querySelector(`#${button.dataset.jump}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
   document.querySelectorAll('[data-task]').forEach((button) => {
     button.onclick = () => taskSubmissionForm(taskResult.tasks.find((task) => task.id === button.dataset.task));
   });
@@ -2642,7 +2728,7 @@ const restorePlazaListFromHistory = (state) => {
   if (!state?.plazaList) return false;
   document.body.dataset.view = 'plaza';
   const scrollY = Math.max(0, Number(state.plazaScrollY || 0));
-  void plaza(state.plazaSort || 'latest', Math.max(1, Number(state.plazaPage || 1)), state.plazaMonth || '', '')
+  void plaza(state.plazaSort || 'latest', Math.max(1, Number(state.plazaPage || 1)), state.plazaMonth || '', { preserveScroll: false })
     .then(() => requestAnimationFrame(() => window.scrollTo(0, scrollY)))
     .catch((error) => { showToast(error.message || '活动广场加载失败', 'error'); });
   return true;

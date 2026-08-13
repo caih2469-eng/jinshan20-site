@@ -4,14 +4,15 @@ const fs = require('node:fs');
 
 const read = (path) => fs.readFileSync(path, 'utf8');
 
-test('student home keeps only the authorized minimal routes', () => {
+test('student home keeps the existing shortcuts and a working history modal root', () => {
   const app = read('public/app.js');
   const studentBody = app.match(/async function student\([\s\S]*?\r?\n}\r?\n\r?\nfunction openStudentCheckinHistory/)?.[0] || '';
+  assert.match(studentBody, /id="historyCheckins"/);
   assert.match(studentBody, /id="plaza"/);
+  assert.match(studentBody, /id="inbox"/);
   assert.match(studentBody, /id="modalRoot"/);
-  assert.match(studentBody, /id="teamMembers"/);
-  assert.match(studentBody, /id="activityTasks"/);
-  assert.doesNotMatch(studentBody, /id="(?:historyCheckins|inbox|ranking|myTeam|teamCheckinStats)"/);
+  assert.match(studentBody, /id="ranking"/);
+  assert.match(studentBody, /id="myTeam"/);
 });
 
 test('member check-in respects the administrator image limit and submits all confirmed media ids', () => {

@@ -100,24 +100,15 @@ if (!source.includes(marker)) {
 }
 
 const output = fs.readFileSync(file, 'utf8');
-const minimalHome = output.includes('/* STUDENT_HOME_MINIMAL_SCOPE_V1 */');
-const validMinimalHome = minimalHome
-  && output.includes('buildStudentTeamContext')
-  && output.includes('const [taskPage, makeupAllowed] = await Promise.all([')
-  && output.includes('options.includeImages === false')
-  && output.includes('const checkins = await checkinsPromise;')
-  && output.includes('includeImages: false')
-  && output.includes('teamMembers:')
-  && !/export const buildStudentDashboard = async[\s\S]*?(?:materialTasks|checkinStats)/.test(output);
-const validLegacyHome = !minimalHome
-  && output.includes(marker)
-  && output.includes('buildStudentTeamContext')
-  && output.includes('const [taskPage, makeupAllowed] = await Promise.all([')
-  && output.includes('options.includeImages === false')
-  && output.includes('const checkins = await checkinsPromise;')
-  && output.includes('const [personal, team] = await Promise.all([personalPromise, teamPromise]);')
-  && output.includes('includeImages: false')
-  && output.includes('buildTeamSummary(env, user, config, { teamContext })');
-if (!validMinimalHome && !validLegacyHome) throw new Error('学生Dashboard严格p95聚合优化生成不完整');
+if (!output.includes(marker)
+    || !output.includes('buildStudentTeamContext')
+    || !output.includes('const [taskPage, makeupAllowed] = await Promise.all([')
+    || !output.includes('options.includeImages === false')
+    || !output.includes('const checkins = await checkinsPromise;')
+    || !output.includes('const [personal, team] = await Promise.all([personalPromise, teamPromise]);')
+    || !output.includes('includeImages: false')
+    || !output.includes('buildTeamSummary(env, user, config, { teamContext })')) {
+  throw new Error('学生Dashboard严格p95聚合优化生成不完整');
+}
 
 console.log('Applied strict p95 Dashboard V4: shared team context, overlapped stats/checkins and no unused home image signing.');
