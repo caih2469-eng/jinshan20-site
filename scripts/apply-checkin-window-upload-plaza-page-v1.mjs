@@ -244,7 +244,8 @@ const restorePlazaListFromHistory = (state) => {
   if (!state?.plazaList) return false;
   document.body.dataset.view = 'plaza';
   const scrollY = Math.max(0, Number(state.plazaScrollY || 0));
-  void plaza(state.plazaSort || 'latest', Math.max(1, Number(state.plazaPage || 1)), state.plazaMonth || '', { preserveScroll: false })
+  const query = typeof state.plazaQuery === 'string' ? state.plazaQuery : '';
+  void plaza(state.plazaSort || 'latest', Math.max(1, Number(state.plazaPage || 1)), state.plazaMonth || '', query)
     .then(() => requestAnimationFrame(() => window.scrollTo(0, scrollY)))
     .catch((error) => { showToast(error.message || '活动广场加载失败', 'error'); });
   return true;
@@ -256,6 +257,12 @@ window.addEventListener('popstate', (event) => {
 `;
     next = replaceOnce(next, 'async function openPlazaPost', helper + 'async function openPlazaPost', 'plaza history helper');
   }
+
+  next = next
+    .replace("    const open = () => openPlazaPost(card.dataset.post, sort, page, '');", "    const open = () => openPlazaPost(card.dataset.post, sort, page, '', true, query);")
+    .replace("  const safeQuery = String(query || '').trim().slice(0, 40);", "  const safeQuery = typeof query === 'string' ? query.trim().slice(0, 40) : '';")
+    .replace("async function openPlazaPost(postId, sort, page, month, countView = true) {", "async function openPlazaPost(postId, sort, page, month, countView = true, query = '') {")
+    .replace('const listState = { ...(history.state || {}), plazaList: true, plazaDetail: false, plazaSort: sort, plazaPage: page, plazaMonth: month, plazaScrollY };', "const listState = { ...(history.state || {}), plazaList: true, plazaDetail: false, plazaSort: sort, plazaPage: page, plazaMonth: month, plazaQuery: typeof query === 'string' ? query : '', plazaScrollY };");
 
   if (!next.includes(marker)) next = marker + '\n' + next;
   if (next !== source) write(file, next);

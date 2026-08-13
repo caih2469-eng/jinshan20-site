@@ -127,6 +127,12 @@ test('活动广场查看详情改为全页面导航且不再使用详情浮窗',
   assert.doesNotMatch(detail, /card modal plaza-detail/);
   assert.doesNotMatch(detail, /<\/section><\/div>`/);
   assert.match(app, /restorePlazaListFromHistory/);
+  assert.match(app, /const query = typeof state\.plazaQuery === 'string' \? state\.plazaQuery : '';/);
+  assert.match(app, /plaza\(state\.plazaSort \|\| 'latest',[\s\S]*state\.plazaMonth \|\| '', query\)/);
+  assert.doesNotMatch(app, /state\.plazaMonth \|\| '', \{ preserveScroll: false \}\)/);
+  assert.match(app, /const safeQuery = typeof query === 'string' \? query\.trim\(\)\.slice\(0, 40\) : '';/);
+  assert.match(app, /openPlazaPost\(card\.dataset\.post, sort, page, '', true, query\)/);
+  assert.match(detail, /plazaQuery: typeof query === 'string' \? query : ''/);
   assert.match(style, /\.plaza-detail-page/);
   assert.match(detail, /2048w/);
 });
