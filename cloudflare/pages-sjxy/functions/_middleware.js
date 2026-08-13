@@ -5,12 +5,6 @@ export const normalizePagesPathname = (pathname) => {
   return normalized || '/';
 };
 
-export const shouldProxyToProduction = (pathname) => (
-  pathname === '/health' ||
-  pathname === '/api' ||
-  pathname.startsWith('/api/')
-);
-
 const rewriteUpstreamLocation = (headers, upstreamOrigin, publicOrigin) => {
   const location = headers.get('location');
   if (!location) return;
@@ -67,6 +61,5 @@ export const onRequest = (context) => {
       }
     });
   }
-  if (shouldProxyToProduction(normalizedPath)) return proxyToProduction(context);
-  return context.next();
+  return proxyToProduction(context);
 };
