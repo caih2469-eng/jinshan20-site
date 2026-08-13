@@ -1,0 +1,38 @@
+/
+  Cache-Control: public, max-age=5, must-revalidate
+
+/index.html
+  Cache-Control: public, max-age=5, must-revalidate
+
+/entrance
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/entrance.html
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/bootstrap.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/deployment-version.json
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/site-path.js
+  Cache-Control: public, max-age=3600
+
+/app.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/admin-client.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/health-checkin.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/style.css
+  Cache-Control: public, max-age=31536000, immutable
+
+/vendor/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/entrance.js
+  Cache-Control: public, max-age=31536000, immutable

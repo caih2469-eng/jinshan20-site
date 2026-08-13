@@ -1,6 +1,15 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+test('sjxy serves static files locally and only proxies dynamic production routes', async () => {
+  const { shouldProxyToProduction } = await import('../cloudflare/pages-sjxy/functions/_middleware.js');
+  assert.equal(shouldProxyToProduction('/api'), true);
+  assert.equal(shouldProxyToProduction('/api/session'), true);
+  assert.equal(shouldProxyToProduction('/health'), true);
+  assert.equal(shouldProxyToProduction('/app.js'), false);
+  assert.equal(shouldProxyToProduction('/api-malicious'), false);
+});
+
 test('sjxy proxy preserves request method, body, cookies, response cookie and status', async () => {
   const { proxyToProduction } = await import('../cloudflare/pages-sjxy/functions/_middleware.js');
   let capturedRequest;
@@ -48,19 +57,17 @@ test('sjxy proxy rewrites same-upstream redirects to the public hostname', async
   assert.equal(response.headers.get('location'), 'https://sjxy.pages.dev/entrance?reason=expired');
 });
 
-test('sjxy proxies static assets so the public entry always uses the current production bytes', async () => {
-  const { proxyToProduction } = await import('../cloudflare/pages-sjxy/functions/_middleware.js');
-  let capturedRequest;
-  const response = await proxyToProduction({
+test('sjxy static assets continue through Pages without the extra upstream hop', async () => {
+  const { onRequest } = await import('../cloudflare/pages-sjxy/functions/_middleware.js');
+  let nextCalls = 0;
+  const response = await onRequest({
     env: {},
-    request: new Request('https://sjxy.pages.dev/app.js?v=current')
-  }, async (request) => {
-    capturedRequest = request;
-    return new Response('current production app', {
-      headers: { etag: 'production-etag' }
-    });
+    request: new Request('https://sjxy.pages.dev/app.js?v=current'),
+    next() {
+      nextCalls += 1;
+      return new Response('current production app');
+    }
   });
-  assert.equal(capturedRequest.url, 'https://jinshan20.pages.dev/app.js?v=current');
-  assert.equal(response.headers.get('etag'), 'production-etag');
+  assert.equal(nextCalls, 1);
   assert.equal(await response.text(), 'current production app');
 });

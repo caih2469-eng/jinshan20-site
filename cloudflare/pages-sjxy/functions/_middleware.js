@@ -1,9 +1,16 @@
 const DEFAULT_UPSTREAM_ORIGIN = 'https://jinshan20.pages.dev';
+const DYNAMIC_PATH_PREFIXES = ['/api/', '/health'];
 
 export const normalizePagesPathname = (pathname) => {
   const normalized = `/${String(pathname || '/').replace(/^\/+/, '').replace(/\/{2,}/g, '/')}`;
   return normalized || '/';
 };
+
+export const shouldProxyToProduction = (pathname) => (
+  pathname === '/api' || DYNAMIC_PATH_PREFIXES.some((prefix) => (
+    prefix.endsWith('/') ? pathname.startsWith(prefix) : pathname === prefix
+  ))
+);
 
 const rewriteUpstreamLocation = (headers, upstreamOrigin, publicOrigin) => {
   const location = headers.get('location');
@@ -61,5 +68,6 @@ export const onRequest = (context) => {
       }
     });
   }
-  return proxyToProduction(context);
+  if (shouldProxyToProduction(normalizedPath)) return proxyToProduction(context);
+  return context.next();
 };
