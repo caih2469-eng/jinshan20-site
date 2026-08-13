@@ -2572,7 +2572,7 @@ const renderPlazaPage = (result, sort, page, month, pageEpoch, options = {}) => 
   document.querySelector('#prevPage').onclick = () => plaza(sort, page - 1, '', query);
   document.querySelector('#nextPage').onclick = () => plaza(sort, page + 1, '', query);
   document.querySelectorAll('[data-post]').forEach((card) => {
-    const open = () => openPlazaPost(card.dataset.post, sort, page, '');
+    const open = () => openPlazaPost(card.dataset.post, sort, page, '', true, query);
     card.onclick = open;
     card.onkeydown = (event) => {
       if (event.key === 'Enter' || event.key === ' ') {
@@ -2589,7 +2589,7 @@ async function plaza(sort = 'latest', page = 1, month = '', query = '') {
   /* LAZY_PLAZA_ENTRY_V1 */
   void window.__LOAD_PLAZA_EXTRAS__?.();
   const safeSort = sort === 'hot' ? 'hot' : 'latest';
-  const safeQuery = String(query || '').trim().slice(0, 40);
+  const safeQuery = typeof query === 'string' ? query.trim().slice(0, 40) : '';
   const cacheKey = scopedCacheKey('plaza', safeSort, page, safeQuery);
   const cached = readViewCache(plazaViewCache, cacheKey);
   const path = `/api/plaza?sort=${safeSort}&page=${page}&limit=20${safeQuery ? `&q=${encodeURIComponent(safeQuery)}` : ''}`;
@@ -2728,7 +2728,8 @@ const restorePlazaListFromHistory = (state) => {
   if (!state?.plazaList) return false;
   document.body.dataset.view = 'plaza';
   const scrollY = Math.max(0, Number(state.plazaScrollY || 0));
-  void plaza(state.plazaSort || 'latest', Math.max(1, Number(state.plazaPage || 1)), state.plazaMonth || '', { preserveScroll: false })
+  const query = typeof state.plazaQuery === 'string' ? state.plazaQuery : '';
+  void plaza(state.plazaSort || 'latest', Math.max(1, Number(state.plazaPage || 1)), state.plazaMonth || '', query)
     .then(() => requestAnimationFrame(() => window.scrollTo(0, scrollY)))
     .catch((error) => { showToast(error.message || '活动广场加载失败', 'error'); });
   return true;
@@ -2737,12 +2738,12 @@ window.addEventListener('popstate', (event) => {
   if (document.body.dataset.view === 'plaza-detail' && event.state?.plazaList) restorePlazaListFromHistory(event.state);
 });
 
-async function openPlazaPost(postId, sort, page, month, countView = true) {
+async function openPlazaPost(postId, sort, page, month, countView = true, query = '') {
   const root = app;
   const listUrl = new URL(location.href);
   listUrl.searchParams.delete('plazaPost');
   const plazaScrollY = window.scrollY;
-  const listState = { ...(history.state || {}), plazaList: true, plazaDetail: false, plazaSort: sort, plazaPage: page, plazaMonth: month, plazaScrollY };
+  const listState = { ...(history.state || {}), plazaList: true, plazaDetail: false, plazaSort: sort, plazaPage: page, plazaMonth: month, plazaQuery: typeof query === 'string' ? query : '', plazaScrollY };
   history.replaceState(listState, '', listUrl);
   const detailUrl = new URL(listUrl);
   detailUrl.searchParams.set('plazaPost', postId);

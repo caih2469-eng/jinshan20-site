@@ -62,9 +62,9 @@
     document.head.appendChild(link);
   };
   const warmHomeAssets = () => {
-    preloadCriticalAsset('/style.css?v=84bfcf807e1a815e5c85d17bb8ad43111c0ee70d', 'style', 'high');
-    preloadCriticalAsset('/site-path.js?v=84bfcf807e1a815e5c85d17bb8ad43111c0ee70d', 'script', 'auto');
-    preloadCriticalAsset('/app.js?v=84bfcf807e1a815e5c85d17bb8ad43111c0ee70d', 'script', 'auto');
+    preloadCriticalAsset('/style.css?v=977087b14abe9f891f62b184b59023a214f08191', 'style', 'high');
+    preloadCriticalAsset('/site-path.js?v=977087b14abe9f891f62b184b59023a214f08191', 'script', 'auto');
+    preloadCriticalAsset('/app.js?v=977087b14abe9f891f62b184b59023a214f08191', 'script', 'auto');
   };
   /* LAZY_PLAZA_BOOTSTRAP_V1 */
   const featureScriptPromises = new Map();
@@ -153,13 +153,13 @@
       // Missing data keeps the existing app-level /api/plaza fallback intact.
       window.__BOOTSTRAP_PLAZA_PROMISE__ = Promise.resolve(session.plaza || null);
       window.__BOOTSTRAP_PLAZA_IMAGES__ = [];
-      loadStylesheet('/style.css?v=84bfcf807e1a815e5c85d17bb8ad43111c0ee70d');
+      loadStylesheet('/style.css?v=977087b14abe9f891f62b184b59023a214f08191');
       /* ROLE_SCOPED_ADMIN_STYLE_V1 */
       if (window.__BOOTSTRAP_USER__?.role === 'admin') {
-        loadStylesheet('/admin-dashboard-refactor.css?v=84bfcf807e1a815e5c85d17bb8ad43111c0ee70d');
+        loadStylesheet('/admin-dashboard-refactor.css?v=977087b14abe9f891f62b184b59023a214f08191');
       }
-      await loadScript('/site-path.js?v=84bfcf807e1a815e5c85d17bb8ad43111c0ee70d');
-      await loadScript('/app.js?v=84bfcf807e1a815e5c85d17bb8ad43111c0ee70d');
+      await loadScript('/site-path.js?v=977087b14abe9f891f62b184b59023a214f08191');
+      await loadScript('/app.js?v=977087b14abe9f891f62b184b59023a214f08191');
 
 
       window.__RECORD_PERF__('bootstrap-complete', {
