@@ -1,4 +1,3 @@
-/* STUDENT_HOME_EXACT_SCOPE_V2 */
 /* PLAZA_UNDER_1S_AND_MEMBER_IMAGE_LIMIT_V1 */
 /* PLAZA_DETAIL_INSTANT_OPEN_V2 */
 /* APPROVED_LAYOUT_TEAM_DRAFT_720_V2 */
@@ -1569,9 +1568,11 @@ async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
     else memberUploadWarmup();
   }, 1100);
   const isInteraction = user.trackId === 'interaction';
+  const teamListResult = dashboard.teamSummary;
   const myTeam = dashboard.teamSummary?.team;
   const taskResult = { tasks: dashboard.tasks };
   const checkinStats = dashboard.checkinStats || { personalDays: 0, teamDays: 0 };
+  const materialResult = { tasks: dashboard.materialTasks };
   const completedTasks = taskResult.tasks.filter((task) =>
     ['submitted', 'approved'].includes(task.submission?.status) || task.memberCheckin
   ).length;
@@ -1599,10 +1600,34 @@ async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
       <button id="inbox"><span>✉</span><strong>信息箱</strong><small>通知评论</small></button>
       <button id="teamCheckinStats"><span>◇</span><strong>队伍累计</strong><small>${dashboard.teamSummary?.team ? `${Number(checkinStats.teamDays || 0)}天 · 查看` : '未加入'}</small></button>
     </nav>
+    <div class="student-top-actions">
+      <button class="secondary" id="ranking">查看排行榜</button>
+    </div>
+    <section class="card profile-card">
+      <h2>我的资料</h2>
+      <details class="profile-details">
+      <summary>查看完整身份资料</summary>
+      <div class="profile-grid">
+        <div><span>姓名</span><strong>${escapeHtml(user.name)}</strong></div>
+        <div><span>学号</span><strong>${escapeHtml(user.studentId)}</strong></div>
+        <div><span>校区</span><strong>${escapeHtml(user.campus)}</strong></div>
+        <div><span>所属赛道</span><strong>${escapeHtml(trackName(user.trackId))}</strong></div>
+        <div><span>账号状态</span><strong>${escapeHtml(statusLabel(user.status))}</strong></div>
+        <div><span>创建时间</span><strong>${escapeHtml(formatDate(user.createdAt))}</strong></div>
+      </div>
+      <p class="muted">关键身份资料仅可由管理员维护，如有错误请联系活动工作人员。</p>
+      </details>
+    </section>
     ${isInteraction ? `
       <section class="card" id="myTeam">
-        <h2>队伍成员</h2>
+        <div class="row"><h2>我的队伍</h2><span class="right muted">${teamListResult.teamCount}/${teamListResult.maxTeams} 个队伍</span></div>
         ${myTeam ? `
+          <div class="team-summary">
+            <div><span>队伍名称</span><strong>${escapeHtml(myTeam.name)}</strong></div>
+            <div><span>邀请码</span><strong class="invite-code">${escapeHtml(myTeam.inviteCode)}</strong></div>
+            <div><span>成员人数</span><strong>${myTeam.memberCount}/${myTeam.memberLimit}</strong></div>
+          </div>
+          <h3>队伍成员</h3>
           <div class="member-list">${myTeam.members.map((member) => `<span>${escapeHtml(member.name)}（${escapeHtml(member.campus)}）</span>`).join('')}</div>
         ` : `
           <p class="muted">你尚未被编入队伍。队伍由管理员统一导入和调整，请联系活动管理员。</p>`}
@@ -1634,6 +1659,15 @@ async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
       <div class="grid">${taskCards || '<p class="muted">当前没有已发布任务</p>'}</div>
     </section>
     `);
+  const materialStatus = { submitted: '已提交', returned: '退回修改' };
+  app.insertAdjacentHTML('beforeend', `<section class="card"><div class="row"><h2>最终截图证明</h2><span class="right muted">最多 8 张 · 压缩后单张不超过 5MB</span></div>
+    <div class="grid">${materialResult.tasks.map((task) => `<article class="slot">
+      <div class="row"><h2>${escapeHtml(task.title)}</h2><span class="pill ${task.submission?.status === 'submitted' ? 'done' : 'pending'}">${materialStatus[task.submission?.status] || '未提交'}</span></div>
+      <p>${escapeHtml(task.description)}</p><p class="muted">截止：${formatDate(task.deadline)} · 个人提交 · ${task.fileTypes.map((type) => `.${escapeHtml(type)}`).join('、')} · 最多 ${task.fileLimit} 张</p>
+      ${task.submission?.reviewNote ? `<p class="bad">退回原因：${escapeHtml(task.submission.reviewNote)}</p>` : ''}
+      ${task.submission?.files?.length ? `<div>${task.submission.files.map((file) => `<button class="secondary material-download" data-url="${file.downloadUrl}" data-name="${escapeHtml(file.originalName)}">${escapeHtml(file.originalName)}</button>`).join(' ')}</div>` : ''}
+      <button data-material="${task.id}" ${task.submission?.status === 'submitted' ? 'disabled' : ''}>${task.submission?.status === 'returned' ? '修改并重新提交' : '提交材料'}</button>
+    </article>`).join('') || '<p class="muted">暂无材料任务</p>'}</div></section>`);
   prepareDynamicContent(app);
   recordPerf('page-render', {
     page: 'student-home',
@@ -1642,6 +1676,7 @@ async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
   });
   document.querySelector('#out').onclick = logout;
   document.querySelector('#historyCheckins').onclick = () => { startPhotoFlow('history'); openStudentCheckinHistory(); };
+  document.querySelector('#ranking').onclick = () => rankings();
   document.querySelector('#plaza').onclick = () => { startPhotoFlow('plaza'); plaza(); };
   document.querySelector('#inbox').onclick = () => inbox();
   document.querySelector('#teamCheckinStats').onclick = () => void openTeamCheckinHistory();
@@ -2693,7 +2728,7 @@ const restorePlazaListFromHistory = (state) => {
   if (!state?.plazaList) return false;
   document.body.dataset.view = 'plaza';
   const scrollY = Math.max(0, Number(state.plazaScrollY || 0));
-  void plaza(state.plazaSort || 'latest', Math.max(1, Number(state.plazaPage || 1)), state.plazaMonth || '', '')
+  void plaza(state.plazaSort || 'latest', Math.max(1, Number(state.plazaPage || 1)), state.plazaMonth || '', { preserveScroll: false })
     .then(() => requestAnimationFrame(() => window.scrollTo(0, scrollY)))
     .catch((error) => { showToast(error.message || '活动广场加载失败', 'error'); });
   return true;

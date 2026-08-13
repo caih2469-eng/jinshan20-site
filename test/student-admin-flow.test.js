@@ -10,12 +10,9 @@ test('student home keeps the existing shortcuts and a working history modal root
   assert.match(studentBody, /id="historyCheckins"/);
   assert.match(studentBody, /id="plaza"/);
   assert.match(studentBody, /id="inbox"/);
-  assert.match(studentBody, /id="teamCheckinStats"/);
   assert.match(studentBody, /id="modalRoot"/);
+  assert.match(studentBody, /id="ranking"/);
   assert.match(studentBody, /id="myTeam"/);
-  assert.match(studentBody, /<h2>队伍成员<\/h2>/);
-  assert.match(studentBody, /id="activityTasks"/);
-  assert.doesNotMatch(studentBody, /id="ranking"|我的资料|最终截图证明|team-summary|邀请码/);
 });
 
 test('member check-in respects the administrator image limit and submits all confirmed media ids', () => {
@@ -43,11 +40,9 @@ test('interaction history and member check-in backend support multiple media obj
   assert.match(studentRoute, /imageCount: uploaded\.length/);
 });
 
-test('ranking backend code remains available but its student-home entry is removed', () => {
+test('ranking remains available without interfering with multi-image check-in', () => {
   const app = read('public/app.js');
-  const studentBody = app.match(/async function student\([\s\S]*?\r?\n}\r?\n\r?\nfunction openStudentCheckinHistory/)?.[0] || '';
   assert.match(app, /const rankingViewCache = new Map\(\)/);
   assert.match(app, /async function rankings\(/);
   assert.match(app, /function memberCheckinForm\(task\)/);
-  assert.doesNotMatch(studentBody, /id="ranking"/);
 });

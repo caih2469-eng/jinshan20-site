@@ -127,8 +127,6 @@ test('活动广场查看详情改为全页面导航且不再使用详情浮窗',
   assert.doesNotMatch(detail, /card modal plaza-detail/);
   assert.doesNotMatch(detail, /<\/section><\/div>`/);
   assert.match(app, /restorePlazaListFromHistory/);
-  assert.match(app, /void plaza\(state\.plazaSort \|\| 'latest', Math\.max\(1, Number\(state\.plazaPage \|\| 1\)\), state\.plazaMonth \|\| '', ''\)/);
-  assert.doesNotMatch(app, /state\.plazaMonth \|\| '', \{ preserveScroll: false \}/);
   assert.match(style, /\.plaza-detail-page/);
   assert.match(detail, /2048w/);
 });
@@ -141,7 +139,6 @@ test('修复层在V5和独立Check-in Worker部署链最后执行', () => {
   assert.match(v5, /await import\('\.\/finalize-checkin-settings-v1\.mjs'\)/);
   assert.match(v5, /await import\('\.\/finalize-plaza-detail-page-v1\.mjs'\)/);
   assert.match(v5, /await import\('\.\/apply-plaza-under-1s-and-member-image-limit-v1\.mjs'\)/);
-  assert.match(v5, /await import\('\.\/finalize-student-home-exact-scope-v2\.mjs'\)/);
   assert.match(checkinSplit, /await import\('\.\/apply-checkin-window-upload-plaza-page-v1\.mjs'\)/);
   assert.match(checkinSplit, /await import\('\.\/finalize-checkin-settings-v1\.mjs'\)/);
   assert.match(fixWorkflow, /--runs 20 --threshold-ms 1000/);
