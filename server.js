@@ -659,13 +659,9 @@ function materialSubmissionView(submission) {
 
 function buildLocalStudentDashboard(data, currentUser) {
   const team = currentUser.trackId === 'interaction' ? teamForUser(data, currentUser.id) : null;
-  const teamSummary = currentUser.trackId === 'interaction'
-    ? {
-        maxTeams: data.config.maxTeams,
-        teamCount: data.teams.length,
-        team: team ? teamView(team, data, true) : null
-      }
-    : null;
+  const teamMembers = team
+    ? team.memberIds.map((id) => data.users.find((item) => item.id === id)).filter(Boolean).map(safeUser)
+    : [];
   const tasks = data.tasks
     .filter((task) => task.trackId === currentUser.trackId && task.status === 'published'
       && (!['weekly', 'activityDays'].includes(task.scheduleType) || taskOccurrenceDate(task)))
@@ -692,50 +688,20 @@ function buildLocalStudentDashboard(data, currentUser) {
           const member = data.users.find((item) => item.id === id);
           const checkin = data.memberCheckins.find((item) =>
             item.taskId === task.id && item.occurrenceDate === occurrenceDate && item.userId === id);
-          return {
-            ...(member ? safeUser(member) : { id }),
-            checked: Boolean(checkin),
-            submittedAt: checkin?.submittedAt || null
-          };
+          return { ...(member ? safeUser(member) : { id }), checked: Boolean(checkin), submittedAt: checkin?.submittedAt || null };
         })
       } : null;
       return {
-        ...taskView(task),
-        occurrenceDate,
+        ...taskView(task), occurrenceDate,
         availabilityError: taskAvailability(task, data, Date.now(), occurrenceDate),
-        submission: submission || null,
-        memberCheckin,
-        teamProgress,
+        submission: submission || null, memberCheckin, teamProgress,
         isCaptain: Boolean(taskTeam && taskTeam.captainId === currentUser.id)
       };
     });
-  const materialTasks = data.materialTasks.filter((task) => task.enabled).map((task) => {
-    const owner = materialOwner(data, task, currentUser);
-    const submission = owner
-      ? data.materialSubmissions.find((item) => item.taskId === task.id
-        && item.ownerType === owner.ownerType
-        && item.ownerId === owner.ownerId)
-      : null;
-    return {
-      ...task,
-      ownerLabel: owner?.label || null,
-      submission: materialSubmissionView(submission)
-    };
-  });
   return {
-    version: 1,
-    user: safeUser(currentUser),
-    config: data.config,
-    tracks: data.tracks,
-    date: today(),
-    time: nowTime(),
-    teamSummary,
-    tasks,
-    materialTasks,
-    switches: {
-      activityEnabled: data.config.activityEnabled,
-      trackEnabled: data.config.trackEnabled
-    }
+    version: 1, user: safeUser(currentUser), config: data.config, tracks: data.tracks,
+    date: today(), time: nowTime(), teamMembers, tasks,
+    switches: { activityEnabled: data.config.activityEnabled, trackEnabled: data.config.trackEnabled }
   };
 }
 

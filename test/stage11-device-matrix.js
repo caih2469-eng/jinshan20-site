@@ -140,21 +140,29 @@ const commandClient = (socket) => {
       const login = await send('Runtime.evaluate', {
         awaitPromise: true,
         returnByValue: true,
-        expression: `(async()=>{const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({studentId:'demo-health',password:'Demo123!'})});const x=await r.json();if(!r.ok)return {ok:false,status:r.status,error:x.error};localStorage.token=x.token;localStorage.user=JSON.stringify(x.user);location.replace('/');return {ok:true};})()`
+        expression: `(async()=>{const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({studentId:'demo-health',password:'Demo123!'})});const x=await r.json();if(!r.ok)return {ok:false,status:r.status,error:x.error};return {ok:true,token:x.token,user:x.user};})()`
       });
+      const loginValue = login.result?.result?.value;
+      if (loginValue?.ok) {
+        await send('Page.addScriptToEvaluateOnNewDocument', {
+          source: `localStorage.setItem('token', ${JSON.stringify(loginValue.token)});localStorage.setItem('user', ${JSON.stringify(JSON.stringify(loginValue.user))});`
+        });
+      }
+      await send('Page.navigate', { url: `http://127.0.0.1:${appPort}/index.html` });
+      await wait(400);
       await send('Runtime.evaluate', {
         awaitPromise: true,
         expression: `new Promise((resolve)=>{const started=Date.now();const poll=()=>{if(document.querySelector('#activityTasks')||Date.now()-started>5000)return resolve();setTimeout(poll,50)};poll()})`
       });
       const evaluation = await send('Runtime.evaluate', {
         returnByValue: true,
-        expression: `({title:document.title,hasStudentShell:Boolean(document.querySelector('.student-user-card')),hasCheckin:Boolean(document.querySelector('#activityTasks')),hasHistoryEntries:Boolean(document.querySelector('#historyCheckins')&&document.querySelector('#teamCheckinStats')),hasPlazaEntry:Boolean(document.querySelector('#plaza')),horizontalOverflow:document.documentElement.scrollWidth>window.innerWidth,scrollWidth:document.documentElement.scrollWidth,innerWidth:window.innerWidth})`
+        expression: `({title:document.title,hasStudentShell:Boolean(document.querySelector('.student-hero')),hasCheckin:Boolean(document.querySelector('#activityTasks')),hasRemovedExtras:Boolean(document.querySelector('#historyCheckins')||document.querySelector('#teamCheckinStats')||document.querySelector('#materialTasks')||document.querySelector('#profile')||document.querySelector('#ranking')||document.querySelector('#inbox')),hasTeamMembers:Boolean(document.querySelector('#teamMembers')),hasPlazaEntry:Boolean(document.querySelector('#plaza')),horizontalOverflow:document.documentElement.scrollWidth>window.innerWidth,scrollWidth:document.documentElement.scrollWidth,innerWidth:window.innerWidth})`
       });
-      results.push({ device: device.name, viewport: `${device.width}x${device.height}`, login: login.result?.result?.value, ...evaluation.result?.result?.value });
+      results.push({ device: device.name, viewport: `${device.width}x${device.height}`, login: loginValue ? { ok: loginValue.ok } : null, ...evaluation.result?.result?.value });
       await send('Runtime.evaluate', { expression: 'localStorage.clear()' });
     }
     console.log(JSON.stringify(results, null, 2));
-    if (results.some((item) => !item.login?.ok || !item.hasStudentShell || !item.hasCheckin || !item.hasHistoryEntries || !item.hasPlazaEntry || item.horizontalOverflow)) process.exitCode = 1;
+    if (results.some((item) => !item.login?.ok || !item.hasStudentShell || !item.hasCheckin || item.hasRemovedExtras || item.hasTeamMembers || !item.hasPlazaEntry || item.horizontalOverflow)) process.exitCode = 1;
     socket.close();
   } finally {
     browser.kill();

@@ -12,14 +12,18 @@ const BUCKET = 'jinshan20-test';
 const FIXTURE = 'test/fixtures/member-checkin-fast-load.webp';
 const STUDENT_ID = 'WEB-PREVIEW-001';
 const STUDENT_PASSWORD = 'BrowserPreview2026';
+const HEALTH_STUDENT_ID = 'WEB-PREVIEW-HEALTH-001';
+const HEALTH_STUDENT_PASSWORD = 'BrowserHealth2026';
 const ADMIN_ID = 'WEB-PREVIEW-ADMIN';
 const ADMIN_PASSWORD = 'BrowserAdmin2026';
 const PREFIX = 'browser-preview/approved1';
 const ids = {
   student: 'browser-preview-student',
+  healthStudent: 'browser-preview-health-student',
   admin: 'browser-preview-admin',
   team: 'browser-preview-team',
   task: 'browser-preview-task',
+  healthTask: 'browser-preview-health-task',
   submission: 'browser-preview-submission',
   submissionImage: 'browser-preview-submission-image',
   memberCheckin: 'browser-preview-member-checkin',
@@ -99,16 +103,18 @@ const seedPreview = async () => {
       `DELETE FROM member_checkins WHERE id=${sqlText(ids.memberCheckin)};`,
       `DELETE FROM team_members WHERE user_id=${sqlText(ids.student)};`,
       `DELETE FROM teams WHERE id=${sqlText(ids.team)};`,
-      `DELETE FROM tasks WHERE id=${sqlText(ids.task)};`,
-      `DELETE FROM users WHERE id IN (${sqlText(ids.student)},${sqlText(ids.admin)});`,
+      `DELETE FROM tasks WHERE id IN (${sqlText(ids.task)},${sqlText(ids.healthTask)});`,
+      `DELETE FROM users WHERE id IN (${sqlText(ids.student)},${sqlText(ids.healthStudent)},${sqlText(ids.admin)});`,
       `INSERT INTO users(id,student_id,name,password_hash,role,campus,track_id,status,created_at) VALUES
         (${sqlText(ids.student)},${sqlText(STUDENT_ID)},'网页验收学生',${sqlText(sha256Password(STUDENT_PASSWORD))},'student','福州校区','interaction','active',${sqlText(now)}),
+        (${sqlText(ids.healthStudent)},${sqlText(HEALTH_STUDENT_ID)},'健康赛道网页验收学生',${sqlText(sha256Password(HEALTH_STUDENT_PASSWORD))},'student','福州校区','health','active',${sqlText(now)}),
         (${sqlText(ids.admin)},${sqlText(ADMIN_ID)},'网页验收管理员',${sqlText(sha256Password(ADMIN_PASSWORD))},'admin','福州校区','interaction','active',${sqlText(now)});`,
       `INSERT INTO teams(id,name,invite_code,member_limit,captain_user_id,created_at) VALUES
         (${sqlText(ids.team)},'网页验收队伍','WEBTEST1',4,${sqlText(ids.student)},${sqlText(now)});`,
       `INSERT INTO team_members(team_id,user_id,joined_at) VALUES (${sqlText(ids.team)},${sqlText(ids.student)},${sqlText(now)});`,
       `INSERT INTO tasks(id,name,description,track_id,starts_at,ends_at,allow_late,image_limit,copy_requirement,submission_type,status,schedule_json,created_at,updated_at) VALUES
-        (${sqlText(ids.task)},'网页浏览器验收活动','用于验证活动广场640px缩略图和原图查看层级','interaction',${sqlText(startsAt)},${sqlText(endsAt)},0,3,'','team','published',NULL,${sqlText(now)},${sqlText(now)});`,
+        (${sqlText(ids.task)},'网页浏览器验收活动','用于验证活动广场640px缩略图和原图查看层级','interaction',${sqlText(startsAt)},${sqlText(endsAt)},0,3,'','team','published',NULL,${sqlText(now)},${sqlText(now)}),
+        (${sqlText(ids.healthTask)},'健康赛道网页验收活动','用于验证另一赛道首页只保留活动广场和进入打卡','health',${sqlText(startsAt)},${sqlText(endsAt)},0,3,'','user','published',NULL,${sqlText(now)},${sqlText(now)});`,
       `INSERT INTO member_checkins(id,task_id,occurrence_date,user_id,team_id,object_key,status,submitted_at) VALUES
         (${sqlText(ids.memberCheckin)},${sqlText(ids.task)},${sqlText(today)},${sqlText(ids.student)},${sqlText(ids.team)},${sqlText(objectKeys.display)},'approved',${sqlText(now)});`,
       `INSERT INTO task_submissions(id,task_id,owner_type,owner_id,occurrence_date,copy_text,plaza_copy,is_public,status,version,submitted_at,created_at,updated_at) VALUES
@@ -243,7 +249,7 @@ const navigate = async (client, url) => {
   await loaded;
 };
 
-const runBrowserAcceptance = async (baseUrl, studentLogin) => {
+const runBrowserAcceptance = async (baseUrl, studentLogin, healthLogin) => {
   const chrome = findChrome();
   const userDataDir = await mkdtemp(path.join(tmpdir(), 'jinshan-chrome-'));
   const port = 9222 + Math.floor(Math.random() * 500);
@@ -276,14 +282,17 @@ const runBrowserAcceptance = async (baseUrl, studentLogin) => {
 
     const homeChecks = await client.evaluate(`(() => ({
       shortcutIds: [...document.querySelectorAll('.student-shortcuts button')].map((item) => item.id || item.dataset.jump || ''),
-      hasFinalProof: document.body.innerText.includes('最终截图证明'),
-      hasPersonalTotal: document.body.innerText.includes('个人累计打卡'),
-      hasTeamTotal: document.body.innerText.includes('队伍累计'),
+      hasTeamMembers: document.body.innerText.includes('队伍成员'),
+      hasCheckinEntry: document.body.innerText.includes('进入打卡'),
+      forbiddenText: ['我的资料','查看排行榜','我的队伍','最终截图证明','个人累计','队伍累计','信息箱','邀请码']
+        .filter((text) => document.body.innerText.includes(text)),
       title: document.querySelector('.student-hero h1')?.textContent || ''
     }))()`);
-    if (homeChecks.shortcutIds.length !== 4) throw new Error(`首页快捷入口不是4项：${homeChecks.shortcutIds.join(',')}`);
-    if (homeChecks.hasFinalProof) throw new Error('首页仍存在“最终截图证明”');
-    if (!homeChecks.hasPersonalTotal || !homeChecks.hasTeamTotal) throw new Error('首页累计打卡信息缺失');
+    if (homeChecks.shortcutIds.length !== 1 || homeChecks.shortcutIds[0] !== 'plaza') {
+      throw new Error(`首页快捷入口不是仅活动广场：${homeChecks.shortcutIds.join(',')}`);
+    }
+    if (!homeChecks.hasTeamMembers || !homeChecks.hasCheckinEntry) throw new Error('首页队伍成员或进入打卡缺失');
+    if (homeChecks.forbiddenText.length) throw new Error(`首页仍存在未授权模块：${homeChecks.forbiddenText.join('、')}`);
     if (homeChecks.title !== '廿载同心，青春同行') throw new Error(`首页主题异常：${homeChecks.title}`);
 
     await client.call('Network.clearBrowserCache');
@@ -320,8 +329,18 @@ const runBrowserAcceptance = async (baseUrl, studentLogin) => {
     if (viewer.viewerZ <= viewer.modalZ) throw new Error(`原图层级没有高于详情层：${viewer.viewerZ} <= ${viewer.modalZ}`);
     await client.evaluate(`document.querySelector('[data-image-close]')?.click()`);
     await waitFor(client, `!document.querySelector('.image-viewer') && Boolean(document.querySelector('.plaza-detail'))`, 10_000, '关闭原图后保留详情');
-    await client.evaluate(`document.querySelector('#closePost')?.click(); document.querySelector('#backHome')?.click();`);
-    await waitFor(client, `Boolean(document.querySelector('#plaza'))`, 15_000, '返回首页');
+    await client.evaluate(`document.querySelector('#closePost')?.click()`);
+    const plazaReturn = await waitFor(client, `(() => {
+      if (document.body.dataset.view !== 'plaza') return null;
+      const input = document.querySelector('#plazaSearchInput');
+      const panel = document.querySelector('#plazaSearchPanel');
+      return { query: input?.value || '', searchVisible: Boolean(panel && !panel.hidden), hasCards: Boolean(document.querySelector('[data-post]')) };
+    })()`, 15_000, '详情返回活动广场');
+    if (plazaReturn.query || plazaReturn.searchVisible || !plazaReturn.hasCards) {
+      throw new Error(`详情返回状态异常：${JSON.stringify(plazaReturn)}`);
+    }
+    await client.evaluate(`document.querySelector('#backHome')?.click();`);
+    await waitFor(client, `Boolean(document.querySelector('#plaza'))`, 15_000, '广场返回首页');
 
     await client.evaluate(`window.__BROWSER_PLAZA_HOT_STARTED__ = performance.now(); document.querySelector('#plaza').click();`);
     const hot = await waitFor(client, `(() => {
@@ -331,12 +350,31 @@ const runBrowserAcceptance = async (baseUrl, studentLogin) => {
     })()`, 10_000, '活动广场热缓存首图');
     if (hot > 1200) throw new Error(`网页版热缓存首图耗时${hot}ms，超过1200ms`);
 
+    await client.evaluate(`localStorage.setItem('token', ${JSON.stringify(healthLogin.token)}); localStorage.setItem('user', ${JSON.stringify(JSON.stringify(healthLogin.user))});`);
+    await navigate(client, `${baseUrl}/?debugPerf=1&healthAcceptance=${Date.now()}`);
+    await waitFor(client, `Boolean(document.querySelector('#plaza') && document.querySelector('#activityTasks') && document.body.dataset.view === 'student')`, 20_000, '健康赛道学生首页');
+    const healthHomeChecks = await client.evaluate(`(() => ({
+      shortcutIds: [...document.querySelectorAll('.student-shortcuts button')].map((item) => item.id || item.dataset.jump || ''),
+      hasTeamMembers: Boolean(document.querySelector('#teamMembers')),
+      hasCheckinEntry: document.body.innerText.includes('进入打卡'),
+      forbiddenText: ['我的资料','查看排行榜','我的队伍','最终截图证明','个人累计','队伍累计','信息箱','邀请码']
+        .filter((text) => document.body.innerText.includes(text))
+    }))()`);
+    if (healthHomeChecks.shortcutIds.length !== 1 || healthHomeChecks.shortcutIds[0] !== 'plaza') {
+      throw new Error(`健康赛道首页快捷入口不是仅活动广场：${healthHomeChecks.shortcutIds.join(',')}`);
+    }
+    if (healthHomeChecks.hasTeamMembers || !healthHomeChecks.hasCheckinEntry || healthHomeChecks.forbiddenText.length) {
+      throw new Error(`健康赛道首页范围异常：${JSON.stringify(healthHomeChecks)}`);
+    }
+
     return {
       chrome: version['User-Agent'] || version.Browser || '',
       homeChecks,
       cold,
       hotVisibleMs: hot,
       viewer,
+      plazaReturn,
+      healthHomeChecks,
       accepted: true,
       thresholdMs: 1200
     };
@@ -355,6 +393,7 @@ const main = async () => {
   }
   const seed = options.skipSeed ? null : await seedPreview();
   const studentLogin = await login(options.baseUrl, STUDENT_ID, STUDENT_PASSWORD);
+  const healthLogin = await login(options.baseUrl, HEALTH_STUDENT_ID, HEALTH_STUDENT_PASSWORD);
   const adminLogin = await login(options.baseUrl, ADMIN_ID, ADMIN_PASSWORD);
   const settings = await fetchJson(`${options.baseUrl}/api/admin/checkin-settings`, {
     headers: { authorization: `Bearer ${adminLogin.token}` }
@@ -363,7 +402,7 @@ const main = async () => {
   for (const key of requiredSettings) {
     if (!(key in (settings.body.settings || {}))) throw new Error(`管理员打卡设置缺少字段：${key}`);
   }
-  const browser = await runBrowserAcceptance(options.baseUrl, studentLogin);
+  const browser = await runBrowserAcceptance(options.baseUrl, studentLogin, healthLogin);
   const report = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),

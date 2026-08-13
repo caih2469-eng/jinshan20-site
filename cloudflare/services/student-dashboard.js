@@ -1,3 +1,4 @@
+/* STUDENT_HOME_MINIMAL_SCOPE_V1 */
 /* APPROVED_MOBILE_EXPERIENCE_FINALIZED_V1 */
 /* APPROVED_MOBILE_EXPERIENCE_BACKEND_V1 */
 /* CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1 */
@@ -201,38 +202,29 @@ export const submissionImagesForIds = async (env, submissionIds, viewer) => {
 /* STRICT_P95_DASHBOARD_BATCH_V4 */
 export const buildStudentTeamContext = async (env, user) => {
   if (user.role !== 'student' || user.trackId !== 'interaction') {
-    return { team: null, members: [], teamCount: null };
+    return { team: null, members: [] };
   }
-  const [countRow, memberPage] = await Promise.all([
-    env.DB.prepare('SELECT COUNT(*) AS total FROM teams').first(),
-    env.DB.prepare(
-      `SELECT t.id AS teamId,t.name AS teamName,t.invite_code AS inviteCode,
-              t.member_limit AS memberLimit,t.captain_user_id AS captainId,t.created_at AS teamCreatedAt,
-              u.id AS memberId,u.student_id AS memberStudentId,u.name AS memberName,u.campus AS memberCampus,
-              u.track_id AS memberTrackId,u.status AS memberStatus,u.created_at AS memberCreatedAt
-         FROM team_members mine
-         JOIN teams t ON t.id=mine.team_id
-         LEFT JOIN team_members tm ON tm.team_id=t.id
-         LEFT JOIN users u ON u.id=tm.user_id
-        WHERE mine.user_id=?1
-        ORDER BY tm.joined_at,u.student_id`
-    ).bind(user.id).all()
-  ]);
+  const memberPage = await env.DB.prepare(
+    `SELECT t.id AS teamId,t.captain_user_id AS captainId,
+            u.id AS memberId,u.student_id AS memberStudentId,u.name AS memberName,u.campus AS memberCampus,
+            u.track_id AS memberTrackId,u.status AS memberStatus
+       FROM team_members mine
+       JOIN teams t ON t.id=mine.team_id
+       LEFT JOIN team_members tm ON tm.team_id=t.id
+       LEFT JOIN users u ON u.id=tm.user_id
+      WHERE mine.user_id=?1
+      ORDER BY tm.joined_at,u.student_id`
+  ).bind(user.id).all();
   const rows = memberPage.results || [];
-  if (!rows.length || !rows[0].teamId) {
-    return { team: null, members: [], teamCount: Number(countRow?.total || 0) };
-  }
+  if (!rows.length || !rows[0].teamId) return { team: null, members: [] };
   const first = rows[0];
-  const team = {
-    id: first.teamId, name: first.teamName, inviteCode: first.inviteCode,
-    memberLimit: first.memberLimit, captainId: first.captainId, createdAt: first.teamCreatedAt
+  return {
+    team: { id: first.teamId, captainId: first.captainId },
+    members: rows.filter((row) => row.memberId).map((row) => ({
+      id: row.memberId, studentId: row.memberStudentId, name: row.memberName,
+      campus: row.memberCampus, trackId: row.memberTrackId, status: row.memberStatus
+    }))
   };
-  const members = rows.filter((row) => row.memberId).map((row) => ({
-    id: row.memberId, studentId: row.memberStudentId, name: row.memberName,
-    campus: row.memberCampus, trackId: row.memberTrackId, status: row.memberStatus,
-    createdAt: row.memberCreatedAt
-  }));
-  return { team, members, teamCount: Number(countRow?.total || 0) };
 };
 
 export const buildStudentTasks = async (env, user, options = {}) => {
@@ -554,11 +546,9 @@ export const buildStudentDashboardForLogin = async (env, user) => {
     const configPromise = readConfig(env);
     const statements = [
       env.DB.prepare(
-        `SELECT t.id AS teamId,t.name AS teamName,t.invite_code AS inviteCode,
-                t.member_limit AS memberLimit,t.captain_user_id AS captainId,t.created_at AS teamCreatedAt,
+        `SELECT t.id AS teamId,t.captain_user_id AS captainId,
                 u.id AS memberId,u.student_id AS memberStudentId,u.name AS memberName,u.campus AS memberCampus,
-                u.track_id AS memberTrackId,u.status AS memberStatus,u.created_at AS memberCreatedAt,
-                (SELECT COUNT(*) FROM teams) AS teamCount
+                u.track_id AS memberTrackId,u.status AS memberStatus
            FROM (SELECT 1) seed
            LEFT JOIN team_members mine ON mine.user_id=?1
            LEFT JOIN teams t ON t.id=mine.team_id
@@ -593,37 +583,17 @@ export const buildStudentDashboardForLogin = async (env, user) => {
             AND occurrence_date IN (?2,'')
             AND ((owner_type='user' AND owner_id=?3) OR
                  (owner_type='team' AND owner_id=(SELECT team_id FROM team_members WHERE user_id=?3 LIMIT 1)))`
-      ).bind(user.trackId, date, user.id),
-      env.DB.prepare(
-        `SELECT COUNT(DISTINCT occurrence_date) AS total
-           FROM member_checkins WHERE user_id=?1 AND status!='rejected'`
-      ).bind(user.id),
-      env.DB.prepare(
-        `SELECT COUNT(DISTINCT COALESCE(NULLIF(occurrence_date,''),substr(submitted_at,1,10))) AS total
-           FROM task_submissions
-          WHERE owner_type='team'
-            AND owner_id=(SELECT team_id FROM team_members WHERE user_id=?1 LIMIT 1)
-            AND status IN ('submitted','approved')`
-      ).bind(user.id)
+      ).bind(user.trackId, date, user.id)
     ];
     const [config, pages] = await Promise.all([configPromise, env.DB.batch(statements)]);
     const teamRows = pages[0]?.results || [];
     const first = teamRows[0] || null;
-    const team = first?.teamId ? {
-      id: first.teamId, name: first.teamName, inviteCode: first.inviteCode,
-      memberLimit: first.memberLimit, captainId: first.captainId, createdAt: first.teamCreatedAt
-    } : null;
+    const team = first?.teamId ? { id: first.teamId, captainId: first.captainId } : null;
     const members = teamRows.filter((row) => row.memberId).map((row) => ({
       id: row.memberId, studentId: row.memberStudentId, name: row.memberName,
-      campus: row.memberCampus, trackId: row.memberTrackId, status: row.memberStatus,
-      createdAt: row.memberCreatedAt
+      campus: row.memberCampus, trackId: row.memberTrackId, status: row.memberStatus
     }));
-    const teamContext = { team, members, teamCount: Number(first?.teamCount || 0) };
-    const teamSummary = {
-      teamCount: teamContext.teamCount,
-      maxTeams: Number(config.maxTeams || 50),
-      team: team ? { ...team, members, memberCount: members.length } : null
-    };
+    const teamContext = { team, members };
     const taskResult = await buildStudentTasks(env, user, {
       config, date, teamContext, includeImages: false,
       taskPage: { results: pages[1]?.results || [] },
@@ -632,12 +602,9 @@ export const buildStudentDashboardForLogin = async (env, user) => {
       submissions: pages[4]?.results || []
     });
     return {
-      version: 1, user, config, tracks: TRACKS, date, time: shanghaiTime(), teamSummary,
-      tasks: taskResult.tasks, materialTasks: [],
-      checkinStats: {
-        personalDays: Number(pages[5]?.results?.[0]?.total || 0),
-        teamDays: Number(pages[6]?.results?.[0]?.total || 0)
-      },
+      version: 1, user, config, tracks: TRACKS, date, time: shanghaiTime(),
+      teamMembers: members.map(({ id, studentId, name, campus, status }) => ({ id, studentId, name, campus, status })),
+      tasks: taskResult.tasks,
       switches: taskResult.switches
     };
   } catch {
@@ -651,12 +618,9 @@ export const buildStudentDashboard = async (env, user, options = {}) => {
     options.config ? Promise.resolve(options.config) : readConfig(env),
     options.teamContext ? Promise.resolve(options.teamContext) : buildStudentTeamContext(env, user)
   ]);
-  const teamSummary = await buildTeamSummary(env, user, config, { teamContext });
-  const [taskResult, materialTasks, checkinStats] = await Promise.all([
-    buildStudentTasks(env, user, { config, date, teamContext, includeImages: false }),
-    buildStudentMaterialTasks(env, user),
-    buildCheckinStats(env, user, teamSummary)
-  ]);
+  const taskResult = await buildStudentTasks(env, user, {
+    config, date, teamContext, includeImages: false
+  });
   return {
     version: 1,
     user,
@@ -664,10 +628,10 @@ export const buildStudentDashboard = async (env, user, options = {}) => {
     tracks: TRACKS,
     date,
     time: shanghaiTime(),
-    teamSummary,
+    teamMembers: (teamContext.members || []).map(({ id, studentId, name, campus, status }) => ({
+      id, studentId, name, campus, status
+    })),
     tasks: taskResult.tasks,
-    materialTasks,
-    checkinStats,
     switches: taskResult.switches
   };
 };

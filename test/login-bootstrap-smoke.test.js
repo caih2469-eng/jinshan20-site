@@ -67,7 +67,7 @@ test('登录首页V2交接仅作为短时同用户加速，原session网络链�
     },
     async batch(statements) {
       batchCalls += 1;
-      assert.equal(statements.length, 7);
+      assert.equal(statements.length, 5);
       return [
         { results: [{
           teamId: 'team-1', teamName: '测试队', inviteCode: 'ABCD', memberLimit: 8,
@@ -82,8 +82,7 @@ test('登录首页V2交接仅作为短时同用户加速，原session网络链�
           allowLate: 0, imageLimit: 3, copyRequirement: '', submissionType: 'team',
           status: 'published', scheduleJson: null
         }] },
-        { results: [] }, { results: [] }, { results: [] },
-        { results: [{ total: 2 }] }, { results: [{ total: 1 }] }
+        { results: [] }, { results: [] }, { results: [] }
       ];
     }
   };
@@ -95,6 +94,9 @@ test('登录首页V2交接仅作为短时同用户加速，原session网络链�
   assert.equal(batchCalls, 1);
   assert.equal(allCalls, 1);
   assert.equal(dashboard.tasks.length, 1);
-  assert.equal(dashboard.teamSummary.team.id, 'team-1');
-  assert.deepEqual(dashboard.checkinStats, { personalDays: 2, teamDays: 1 });
+  assert.deepEqual(dashboard.teamMembers, [{
+    id: 'user-1', studentId: 'WEB-PREVIEW-001', name: '测试学生', campus: '金山', status: 'active'
+  }]);
+  assert.equal('materialTasks' in dashboard, false);
+  assert.equal('checkinStats' in dashboard, false);
 });

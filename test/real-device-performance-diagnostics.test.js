@@ -6,7 +6,6 @@ const read = (path) => fs.readFileSync(path, 'utf8');
 
 test('实体设备调试模式记录入口到第一张缩略图真实显示耗时', () => {
   const app = read('public/app.js') + '\n' + read('public/admin-client.js');
-  assert.match(app, /startPhotoFlow\('history'\)/);
   assert.match(app, /startPhotoFlow\('plaza'\)/);
   assert.match(app, /startPhotoFlow\('admin-checkin'\)/);
   assert.match(app, /photoFlowDuration/);

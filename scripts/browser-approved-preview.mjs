@@ -6,7 +6,7 @@ import path from 'node:path';
 const wranglerCli = path.resolve('node_modules/wrangler/bin/wrangler.js');
 const workDir = await mkdtemp(path.join(tmpdir(), 'jinshan-browser-cleanup-'));
 const sqlPath = path.join(workDir, 'cleanup.sql');
-const users = "'browser-preview-student','browser-preview-admin'";
+const users = "'browser-preview-student','browser-preview-health-student','browser-preview-admin'";
 const post = "'browser-preview-post'";
 
 try {

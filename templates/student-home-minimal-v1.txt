@@ -1,0 +1,78 @@
+async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
+  const renderStartedAt = performance.now();
+  if (!isCurrentNavigation(pageEpoch)) return;
+  document.body.dataset.view = 'student';
+  config = dashboard.config;
+  tracks = dashboard.tracks;
+  user = dashboard.user;
+  try { localStorage.user = JSON.stringify(user); } catch {}
+  /* STRICT_P95_APP_PREFETCH_V4 */
+  /* MOBILE_REAL_UNDER_1S_V5 */
+  const startPlazaPrefetch = () => { void prefetchStudentPlaza(); };
+  void startPlazaPrefetch();
+  setTimeout(() => {
+    const memberUploadWarmup = () => { void loadImageCompressionLibrary().catch(() => {}); };
+    if ('requestIdleCallback' in window) requestIdleCallback(memberUploadWarmup, { timeout: 700 });
+    else memberUploadWarmup();
+  }, 1100);
+
+  const isInteraction = user.trackId === 'interaction';
+  const teamMembers = Array.isArray(dashboard.teamMembers) ? dashboard.teamMembers : [];
+  const taskResult = { tasks: Array.isArray(dashboard.tasks) ? dashboard.tasks : [] };
+  app.innerHTML = `
+    <header class="student-hero">
+      <div class="student-hero-copy">
+        <span>20TH ANNIVERSARY</span>
+        <h1>廿载同心，青春同行</h1>
+        <p>${escapeHtml(config.activityName)}</p>
+      </div>
+      <button class="student-logout" id="out">退出</button>
+    </header>
+    <nav class="student-shortcuts student-shortcuts-minimal" aria-label="常用功能">
+      <button id="plaza"><span>▦</span><strong>活动广场</strong><small>查看作品</small></button>
+    </nav>
+    ${isInteraction ? `
+      <section class="card" id="teamMembers">
+        <h2>队伍成员</h2>
+        <div class="member-list">${teamMembers.length
+          ? teamMembers.map((member) => `<span>${escapeHtml(member.name)}（${escapeHtml(member.campus)}）</span>`).join('')
+          : '<span class="muted">尚未分配队伍成员</span>'}</div>
+      </section>
+    ` : ''}
+    <div id="modalRoot"></div>`;
+
+  const submissionNames = { draft: '草稿', submitted: '已提交', returned: '退回', approved: '通过' };
+  const taskCards = taskResult.tasks.map((task) => `
+    <article class="slot activity-task-card">
+      <span class="task-kicker">${isInteraction ? '团队活动' : '个人活动'}</span>
+      <div class="row"><h2>${escapeHtml(task.name)}</h2><span class="pill ${task.submission?.status === 'approved' ? 'done' : 'pending'}">${submissionNames[task.submission?.status] || '未提交'}</span></div>
+      <p>${escapeHtml(task.description)}</p>
+      <p class="task-requirement">${task.scheduleType === 'activityDays' ? `${escapeHtml(task.occurrenceDate)} 当天 ${task.dailyStart}–${task.dailyEnd} · 活动第 ${task.refreshDays.join('、')} 天自动刷新` : task.scheduleType === 'weekly' ? `${escapeHtml(task.occurrenceDate)} 当天 ${task.dailyStart}–${task.dailyEnd} · 周${task.weekdays.join('、周')}自动刷新` : `${formatDate(task.startAt)} 至 ${formatDate(task.endAt)}`} · ${isInteraction ? `个人最多 ${task.memberImageLimit || task.imageLimit} 张 · 队伍汇总最多 ${task.imageLimit} 张` : `最多 ${task.imageLimit} 张图`} · ${task.allowLate ? '允许补交' : '不允许补交'}</p>
+      ${task.copyRequirement ? `<div class="notice">文案要求：${escapeHtml(task.copyRequirement)}</div>` : ''}
+      ${task.submission?.reviewNote ? `<p class="bad">审核意见：${escapeHtml(task.submission.reviewNote)}</p>` : ''}
+      ${isInteraction ? `
+        <button data-member-task="${task.id}" ${task.availabilityError ? 'disabled' : ''}>进入打卡</button>
+        ${task.isCaptain ? `<button class="secondary" data-task="${task.id}" ${task.availabilityError || Number(task.teamProgress?.total || 0) === 0 || Number(task.teamProgress?.completed || 0) < Number(task.teamProgress?.total || 0) || ['submitted','approved'].includes(task.submission?.status) ? 'disabled' : ''}>队长汇总提交</button>${Number(task.teamProgress?.total || 0) > 0 && Number(task.teamProgress?.completed || 0) < Number(task.teamProgress?.total || 0) ? '<p class="bad">所有队员完成当天个人打卡后，队长才能汇总提交。</p>' : ''}` : ''}
+      ` : `<button data-task="${task.id}" ${task.availabilityError || ['submitted','approved'].includes(task.submission?.status) ? 'disabled' : ''}>进入打卡</button>`}
+      ${task.availabilityError ? `<p class="bad">${escapeHtml(task.availabilityError)}</p>` : ''}
+    </article>`).join('');
+  app.insertAdjacentHTML('beforeend', `
+    <section class="card" id="activityTasks">
+      <h2>进入打卡</h2>
+      <div class="grid">${taskCards || '<p class="muted">当前没有已发布任务</p>'}</div>
+    </section>`);
+  prepareDynamicContent(app);
+  recordPerf('page-render', {
+    page: 'student-home',
+    duration: roundedDuration(renderStartedAt),
+    navigationEpoch: pageEpoch
+  });
+  document.querySelector('#out').onclick = logout;
+  document.querySelector('#plaza').onclick = () => { startPhotoFlow('plaza'); plaza(); };
+  document.querySelectorAll('[data-task]').forEach((button) => {
+    button.onclick = () => taskSubmissionForm(taskResult.tasks.find((task) => task.id === button.dataset.task));
+  });
+  document.querySelectorAll('[data-member-task]').forEach((button) => {
+    button.onclick = () => memberCheckinForm(taskResult.tasks.find((task) => task.id === button.dataset.memberTask));
+  });
+}

@@ -131,6 +131,17 @@ test('活动广场查看详情改为全页面导航且不再使用详情浮窗',
   assert.match(detail, /2048w/);
 });
 
+test('活动广场详情返回只恢复原列表状态，不把选项对象当搜索文字', () => {
+  const app = read('public/app.js');
+  const restore = topLevelSection(app, 'const restorePlazaListFromHistory');
+  assert.match(restore, /plazaSort/);
+  assert.match(restore, /plazaPage/);
+  assert.match(restore, /plazaMonth/);
+  assert.match(restore, /, ''\)\s*\.then/);
+  assert.doesNotMatch(restore, /preserveScroll/);
+  assert.match(restore, /window\.scrollTo\(0, scrollY\)/);
+});
+
 test('修复层在V5和独立Check-in Worker部署链最后执行', () => {
   const v5 = read('scripts/apply-mobile-real-under-1s-v5.mjs');
   const checkinSplit = read('scripts/apply-checkin-service-split.mjs');

@@ -117,8 +117,7 @@ jobs:
           done
           echo '正式测试站没有返回当前提交。'
           exit 1
-      - name: Seed fixture and run legacy Chrome diagnostic
-        continue-on-error: true
+      - name: Seed fixture and run required two-track Chrome acceptance
         run: node scripts/browser-approved-preview.mjs --base-url "$STRICT_P95_BASE_URL"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
