@@ -271,6 +271,24 @@ jobs:
         shell: bash
         run: |
           node -e "const fs=require('fs'); fs.writeFileSync('public/deployment-version.json', JSON.stringify({commit:process.env.GITHUB_SHA,runId:process.env.GITHUB_RUN_ID,runAttempt:process.env.GITHUB_RUN_ATTEMPT,assetVersion:process.env.GITHUB_SHA,environment:'production',generatedAt:new Date().toISOString()}, null, 2)+'\n')"
+      - name: Allow browser uploads from both production entry domains
+        working-directory: cloudflare/pages-production
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm exec wrangler r2 bucket cors set jinshan20 --file ../r2-cors-production.json --force
+      - name: Verify production R2 browser upload origins
+        working-directory: cloudflare/pages-production
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cors="$(pnpm exec wrangler r2 bucket cors list jinshan20)"
+          printf '%s\n' "$cors"
+          grep -Fq 'https://jinshan20.pages.dev' <<<"$cors"
+          grep -Fq 'https://sjxy.pages.dev' <<<"$cors"
       - name: Deploy exact main commit to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
