@@ -490,7 +490,7 @@ const directUploadPair = async (request, env) => {
   const now = nowIso();
   const expiresAt = new Date(Date.now() + INTENT_TTL_SECONDS * 1000).toISOString();
   try {
-    const uploads = Promise.all([
+    const [displayObject, thumbObject] = await Promise.all([
       env.UPLOADS.put(displayKey, display.file, {
         httpMetadata: { contentType: display.mimeType }, customMetadata: { private: 'true' }
       }),
@@ -498,7 +498,7 @@ const directUploadPair = async (request, env) => {
         httpMetadata: { contentType: thumb.mimeType }, customMetadata: { private: 'true' }
       })
     ]);
-    const persistence = env.DB.batch([
+    await env.DB.batch([
       env.DB.prepare(
         `INSERT INTO media_upload_intents
           (id,user_id,task_id,business_type,object_key,mime_type,expected_size,width,height,status,
@@ -519,16 +519,15 @@ const directUploadPair = async (request, env) => {
            visibility,business_id,created_at,updated_at)
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'private',NULL,?11,?11)`
       ).bind(displayId, auth.user.id, taskId, businessType, displayKey, display.mimeType,
-        display.size, display.width, display.height, '', now),
+        display.size, display.width, display.height, displayObject?.etag || displayObject?.httpEtag || '', now),
       env.DB.prepare(
         `INSERT INTO media_objects
           (id,owner_user_id,task_id,business_type,object_key,mime_type,file_size,width,height,etag,
            visibility,business_id,created_at,updated_at)
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'private',?11,?12,?12)`
       ).bind(thumbId, auth.user.id, taskId, `${businessType}:thumb`, thumbKey, thumb.mimeType,
-        thumb.size, thumb.width, thumb.height, '', displayId, now)
+        thumb.size, thumb.width, thumb.height, thumbObject?.etag || thumbObject?.httpEtag || '', displayId, now)
     ]);
-    await Promise.all([uploads, persistence]);
   } catch (error) {
     await Promise.all([
       env.UPLOADS.delete(displayKey).catch(() => null),

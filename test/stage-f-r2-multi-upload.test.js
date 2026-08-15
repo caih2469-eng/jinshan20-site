@@ -123,9 +123,6 @@ test('高清图和列表图并行上传后只用一次浏览器请求确认', ()
   assert.doesNotMatch(pairBlock, /requestVariantUploadIntent\(/);
   assert.match(mediaRoute, /const directUploadPair = async/);
   assert.match(mediaRoute, /env\.UPLOADS\.put\(displayKey, display\.file/);
-  assert.match(mediaRoute, /const uploads = Promise\.all\(/);
-  assert.match(mediaRoute, /const persistence = env\.DB\.batch\(/);
-  assert.match(mediaRoute, /await Promise\.all\(\[uploads, persistence\]\)/);
   assert.match(mediaRoute, /url\.pathname === '\/api\/media\/upload-pairs\/direct'/);
 });
 
