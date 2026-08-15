@@ -77,8 +77,8 @@ const encodePipelineCanvas = async (pica, canvas, profile) => {
   if (blob.size > profile.maxBytes) {
     blob = await pica.toBlob(canvas, mimeType, profile.fallbackQuality);
   }
-  if (!blob?.size || blob.size > 1.5 * 1024 * 1024) {
-    throw new Error('图片处理后仍然过大，请在相册中裁剪后重新上传。');
+  if (!blob?.size || blob.size > MEDIA_MAX_FINAL_BYTES) {
+    throw new Error('图片自动压缩后仍超过5MB，请先在相册中裁剪后重试。');
   }
   const extension = mimeType === 'image/webp' ? 'webp' : 'jpg';
   const file = new File([blob], `${profile.baseName}-${profile.suffix}.${extension}`, {

@@ -249,7 +249,9 @@ test('个人打卡多图复用fast接口、每图最多三轮压缩且不生成�
     /function memberCheckinForm\(task\) \{([\s\S]*?)\r?\n\}\r?\n\r?\nfunction materialSubmissionForm/
   )?.[1] || '';
   assert.match(memberBody, /uploadMemberCheckinFast/);
-  assert.match(memberBody, /multiple required/);
+  assert.match(memberBody, /type="file"[^>]*multiple/);
+  assert.match(memberBody, /existingCount \+ files\.length > maxImages/);
+  assert.match(memberBody, /current\.items\.push\(\.\.\.files\.map/);
   assert.match(memberBody, /session\?\.items\?\.map\(\(item\) => item\.mediaId\)/);
   assert.match(memberBody, /mediaIds\s*\n\s*}\)/);
   assert.doesNotMatch(memberBody, /readFiles|uploadCompressedImage|upload-intents|thumb/i);

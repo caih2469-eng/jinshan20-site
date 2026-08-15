@@ -154,6 +154,7 @@ mobileTest = replaceNamedTest(
   '活动广场、历史打卡和管理员列表图统一使用960px Pica链路',
   String.raw`test('活动广场、历史打卡和管理员列表图统一使用960px Pica链路', () => {
   const app = read('public/app.js');
+  const admin = read('public/admin-client.js');
   const style = read('public/style.css');
   const media = read('cloudflare/routes/media.js');
   const backfill = read('scripts/backfill-admin-thumbnails-540.mjs');
@@ -163,14 +164,16 @@ mobileTest = replaceNamedTest(
   assert.match(app, /data-perf-image="history-thumb"/);
   assert.match(plazaBody, /data-perf-image="plaza-thumb"/);
   assert.match(plazaBody, /data-priority=/);
-  assert.match(plazaBody, /cardIndex === 0 \? 'high' : 'low'/);
-  assert.match(app, /data-perf-image="admin-checkin-thumb"/);
+  assert.match(plazaBody, /cardIndex < 4 \? 'eager' : 'lazy'/);
+  assert.match(plazaBody, /cardIndex < 2 \? 'high' : cardIndex < 4 \? 'auto' : 'low'/);
+  assert.match(plazaBody, /cardIndex < 4 \? 'high' : 'low'/);
+  assert.match(admin, /data-perf-image="admin-checkin-thumb"/);
   assert.match(style, /column-count:\s*2/);
   assert.match(media, /THUMB_MAX_EDGE = 960/);
   assert.match(media, /PLAZA_THUMB_MAX_EDGE = 960/);
   assert.match(media, /DISPLAY_MAX_EDGE = 2048/);
-  assert.match(backfill, /thumbs-720-v1/);
-  assert.match(backfill, /encode\(720, 84\)/);
+  assert.match(backfill, /admin-thumbs-540-v1/);
+  assert.match(backfill, /encode\(540, 84\)/);
 });`,
   'Pica与广场首图优先级测试'
 );
@@ -303,7 +306,9 @@ stageFUploadTest = replaceNamedTest(
   assert.match(sessionBlock, /session\.results\[index\] = \{ \.\.\.pair\.display, thumbMediaId: pair\.thumb\.mediaId \};/);
   assert.match(sessionBlock, /const indexes = \[\.\.\.session\.errors\.keys\(\)\];/);
   assert.match(sessionBlock, /Math\.min\(uploadConcurrency\(\), indexes\.length\)/);
-  assert.match(sessionBlock, /第 \$\{failed\} 张图片处理失败，可单独重试失败图片。/);
+  assert.match(sessionBlock, /session\.errors\.entries\(\)/);
+  assert.match(sessionBlock, /error\?\.message \|\| '图片处理失败'/);
+  assert.match(sessionBlock, /可单独重试失败图片/);
 });`,
   '并行双版本上传重试测试'
 );

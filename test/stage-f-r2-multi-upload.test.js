@@ -74,13 +74,19 @@ test('阶段F：任务和材料多图选择后立即预览，并复用独立上�
   const taskBlock = functionBlock('function taskSubmissionForm', 'async function inbox');
   for (const block of [materialBlock, taskBlock]) {
     assert.match(block, /createMediaUploadSession\(/);
-    assert.match(block, /mediaSession\?\.promise/);
+    assert.match(block, /mediaSession\??\.promise/);
     assert.match(block, /mediaSession\?\.release\(\)/);
     assert.doesNotMatch(block, /await readFiles\(/);
   }
+  assert.match(taskBlock, /mediaSession\.append\(files\)/);
+  assert.match(taskBlock, /form\.images\.value = ''/);
+  assert.match(taskBlock, /mediaSession\?\.selected\.length/);
   const sessionBlock = functionBlock('const createMediaUploadSession', 'const readFiles');
+  assert.match(sessionBlock, /session\.append = \(filesToAppend\)/);
+  assert.match(sessionBlock, /selected\.push\(\.\.\.incoming\)/);
+  assert.match(sessionBlock, /const enqueueIndexes = \(indexes\)/);
   assert.ok(
-    sessionBlock.indexOf('renderPreviews(ui.previewContainer') < sessionBlock.indexOf('session.promise = runIndexes'),
+    sessionBlock.indexOf('renderPreviews(ui.previewContainer') < sessionBlock.lastIndexOf('session.promise = enqueueIndexes'),
     '本地预览必须早于压缩、上传和确认请求'
   );
 });
@@ -95,7 +101,18 @@ test('阶段F：多图并发受控，失败图可单独重试且成功图不重�
   assert.match(sessionBlock, /session\.results\[index\] = \{ \.\.\.pair\.display, thumbMediaId: pair\.thumb\.mediaId \};/);
   assert.match(sessionBlock, /const indexes = \[\.\.\.session\.errors\.keys\(\)\];/);
   assert.match(sessionBlock, /Math\.min\(uploadConcurrency\(\), indexes\.length\)/);
-  assert.match(sessionBlock, /第 \$\{failed\} 张图片处理失败，可单独重试失败图片。/);
+  assert.match(sessionBlock, /session\.errors\.entries\(\)/);
+  assert.match(sessionBlock, /error\?\.message \|\| '图片处理失败'/);
+  assert.match(sessionBlock, /可单独重试失败图片/);
+});
+
+test('队伍图片先接收常见大原图，再按5MB最终上限上传', () => {
+  const mediaRoute = fs.readFileSync(path.join(root, 'cloudflare', 'routes', 'media.js'), 'utf8');
+  assert.match(appSource, /MEDIA_MAX_SOURCE_BYTES = 30 \* 1024 \* 1024/);
+  assert.match(appSource, /MEDIA_MAX_FINAL_BYTES = 5 \* 1024 \* 1024/);
+  assert.match(appSource, /blob\.size > MEDIA_MAX_FINAL_BYTES/);
+  assert.match(mediaRoute, /MAX_FINAL_BYTES = 5 \* 1024 \* 1024/);
+  assert.match(appSource, /原图单张不超过 30MB，压缩后单张不超过 5MB/);
 });
 
 test('阶段F：确认后的多张媒体以固定次数批量认领，不按图片逐条查询D1', async () => {

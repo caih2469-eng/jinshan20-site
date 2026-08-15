@@ -654,7 +654,8 @@ const escapeHtml = (value) =>
     "'": '&#39;'
   })[character]);
 
-const MEDIA_MAX_SOURCE_BYTES = 5 * 1024 * 1024;
+const MEDIA_MAX_SOURCE_BYTES = 30 * 1024 * 1024;
+const MEDIA_MAX_FINAL_BYTES = 5 * 1024 * 1024;
 /* MOBILE_ADMIN_PHOTO_FIX_V1 */
 const MEDIA_THUMB_MAX_EDGE = 720;
 const MEDIA_PLAZA_THUMB_MAX_EDGE = 640;
@@ -690,7 +691,7 @@ const bytesMatchMime = (bytes, type) => detectImageMime(bytes) === type;
 
 const normalizeSourceImage = async (file) => {
   if (file.size > MEDIA_MAX_SOURCE_BYTES) {
-    throw new Error('单张图片不能超过5MB，请压缩或重新选择图片。');
+    throw new Error('原图单张不能超过30MB，请先在相册中裁剪后重试。');
   }
 
   const header = new Uint8Array(await file.slice(0, 16).arrayBuffer());
@@ -813,8 +814,8 @@ const encodePipelineCanvas = async (pica, canvas, profile) => {
   if (blob.size > profile.maxBytes) {
     blob = await pica.toBlob(canvas, mimeType, profile.fallbackQuality);
   }
-  if (!blob?.size || blob.size > 1.5 * 1024 * 1024) {
-    throw new Error('图片处理后仍然过大，请在相册中裁剪后重新上传。');
+  if (!blob?.size || blob.size > MEDIA_MAX_FINAL_BYTES) {
+    throw new Error('图片自动压缩后仍超过5MB，请先在相册中裁剪后重试。');
   }
   const extension = mimeType === 'image/webp' ? 'webp' : 'jpg';
   const file = new File([blob], `${profile.baseName}-${profile.suffix}.${extension}`, {
@@ -1229,13 +1230,15 @@ const uploadConcurrency = () => {
 const createMediaUploadSession = (files, context = {}, ui = {}) => {
   const previewStartedAt = performance.now();
   const selected = [...files];
+  const limit = Math.max(1, Number(context.limit || selected.length) || 1);
   if (!selected.length) throw new Error('请选择图片。');
-  if (selected.length > Number(context.limit || selected.length)) throw new Error(`最多上传${context.limit}张图片。`);
-  selected.forEach((file, index) => {
+  if (selected.length > limit) throw new Error(`最多上传${limit}张图片。`);
+  const validateSourceFiles = (incoming, offset = 0) => incoming.forEach((file, index) => {
     if (file.size > MEDIA_MAX_SOURCE_BYTES) {
-      throw new Error(`第 ${index + 1} 张图片超过5MB，请压缩或重新选择。`);
+      throw new Error(`第 ${offset + index + 1} 张原图超过30MB，请先在相册中裁剪后重试。`);
     }
   });
+  validateSourceFiles(selected);
   const controller = new AbortController();
   const rawPreviewUrls = ui.previewContainer ? selected.map((file) => {
     const previewUrl = URL.createObjectURL(file);
@@ -1262,6 +1265,7 @@ const createMediaUploadSession = (files, context = {}, ui = {}) => {
     errors: new Map(),
     promise: null,
     released: false,
+    append: null,
     retryFailed: null,
     release: null
   };
@@ -1295,7 +1299,7 @@ const createMediaUploadSession = (files, context = {}, ui = {}) => {
     }
   };
 
-  const runIndexes = async (indexes) => {
+  const processIndexes = async (indexes) => {
     setStatus('正在读取图片…');
     let cursor = 0;
     const worker = async () => {
@@ -1311,19 +1315,58 @@ const createMediaUploadSession = (files, context = {}, ui = {}) => {
     await Promise.all(workers);
     if (controller.signal.aborted) throw new Error('图片上传已取消，请重新选择图片。');
     if (session.errors.size) {
-      const failed = [...session.errors.keys()].map((index) => index + 1).join('、');
-      throw new Error(`第 ${failed} 张图片处理失败，可单独重试失败图片。`);
+      const details = [...session.errors.entries()].map(([index, error]) => (
+        `第 ${index + 1} 张：${error?.message || '图片处理失败'}`
+      ));
+      throw new Error(`${details.join('；')}。可单独重试失败图片。`);
     }
     setStatus('图片已就绪');
     return session.results;
+  };
+
+  const enqueueIndexes = (indexes) => {
+    const previous = session.promise;
+    const queued = (async () => {
+      if (previous) await previous.catch(() => null);
+      return processIndexes(indexes);
+    })();
+    session.promise = queued;
+    return queued;
+  };
+
+  session.append = (filesToAppend) => {
+    if (session.released) throw new Error('图片上传会话已结束，请重新进入队伍提交。');
+    const incoming = [...filesToAppend];
+    if (!incoming.length) return session.promise;
+    if (selected.length + incoming.length > limit) {
+      throw new Error(`已选择 ${selected.length} 张，最多上传 ${limit} 张图片。`);
+    }
+    validateSourceFiles(incoming, selected.length);
+    const firstNewIndex = selected.length;
+    selected.push(...incoming);
+    session.results.length = selected.length;
+    session.partial.length = selected.length;
+    if (ui.previewContainer) {
+      incoming.forEach((file) => {
+        const previewUrl = URL.createObjectURL(file);
+        mediaPreviewUrls.add(previewUrl);
+        rawPreviewUrls.push(previewUrl);
+      });
+      renderPreviews(ui.previewContainer, rawPreviewUrls.map((previewUrl) => ({ previewUrl })));
+      recordPerf('preview', {
+        imageCount: selected.length,
+        duration: roundedDuration(previewStartedAt),
+        navigationEpoch
+      });
+    }
+    return enqueueIndexes(incoming.map((_, index) => firstNewIndex + index));
   };
 
   session.retryFailed = () => {
     if (!session.errors.size || session.released) return session.promise;
     const indexes = [...session.errors.keys()];
     session.errors.clear();
-    session.promise = runIndexes(indexes);
-    return session.promise;
+    return enqueueIndexes(indexes);
   };
   session.release = () => {
     if (session.released) return;
@@ -1335,7 +1378,7 @@ const createMediaUploadSession = (files, context = {}, ui = {}) => {
     });
     mediaUploadSessions.delete(session);
   };
-  session.promise = runIndexes(selected.map((_, index) => index));
+  session.promise = enqueueIndexes(selected.map((_, index) => index));
   return session;
 };
 
@@ -1853,7 +1896,7 @@ function memberCheckinForm(task) {
       <label>姓名</label><input value="${escapeHtml(user.name)}" readonly>
       <label>学号</label><input value="${escapeHtml(user.studentId)}" readonly>
       <label>校区</label><input value="${escapeHtml(user.campus)}" readonly>
-      <label>图片（最多 ${maxImages} 张）</label><input name="images" type="file" accept="image/jpeg,image/png,image/webp" multiple required>
+      <label>图片（最多 ${maxImages} 张）</label><input name="images" type="file" accept="image/jpeg,image/png,image/webp" multiple>
       <div class="image-preview" id="memberPreview"></div>
       <p class="muted" id="memberUploadStatus">可选择 1–${maxImages} 张图片，选择后会立即预览并上传。</p>
       <button type="button" class="secondary" id="retryMemberUpload" hidden>重试失败图片</button>
@@ -1937,24 +1980,30 @@ function memberCheckinForm(task) {
   };
 
   const runIndexes = (current, indexes) => {
-    let cursor = 0;
-    const worker = async () => {
-      while (cursor < indexes.length && current === session && !current.controller.signal.aborted) {
-        const index = indexes[cursor++];
-        await processItem(current, current.items[index], index);
-      }
+    const previous = current.processingPromise;
+    const processIndexes = async () => {
+      if (previous) await previous.catch(() => null);
+      let cursor = 0;
+      const worker = async () => {
+        while (cursor < indexes.length && current === session && !current.controller.signal.aborted) {
+          const index = indexes[cursor++];
+          await processItem(current, current.items[index], index);
+        }
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(uploadConcurrency(), indexes.length) }, () => worker())
+      );
     };
-    current.processingPromise = Promise.all(
-      Array.from({ length: Math.min(uploadConcurrency(), indexes.length) }, () => worker())
-    ).finally(() => {
-      if (current === session) {
+    const processingPromise = processIndexes().finally(() => {
+      if (current === session && current.processingPromise === processingPromise) {
         current.processingPromise = null;
         form._media = current.items.filter((item) => item.mediaId).map((item) => ({ mediaId: item.mediaId }));
         updateStatus();
       }
     });
+    current.processingPromise = processingPromise;
     updateReadyState();
-    return current.processingPromise;
+    return processingPromise;
   };
 
   document.querySelector('#backMember').onclick = () => {
@@ -1972,27 +2021,33 @@ function memberCheckinForm(task) {
 
   form.images.onchange = () => {
     const files = [...(form.images.files || [])];
-    releaseSession();
-    preview.innerHTML = '';
-    retryButton.hidden = true;
     if (!files.length) {
-      status.textContent = '请选择图片。';
+      if (!session) status.textContent = '请选择图片。';
       updateReadyState();
       return;
     }
-    if (files.length > maxImages) {
+    const existingCount = session?.items?.length || 0;
+    if (existingCount + files.length > maxImages) {
       form.images.value = '';
-      status.textContent = `当前任务最多上传 ${maxImages} 张图片。`;
+      status.textContent = existingCount
+        ? `已选择 ${existingCount} 张，还可选择 ${maxImages - existingCount} 张。`
+        : `当前任务最多上传 ${maxImages} 张图片。`;
       void openDialog({
         title: '图片数量超过限制',
-        message: `管理员设置当前任务最多上传 ${maxImages} 张图片，请重新选择。`,
+        message: existingCount
+          ? `管理员设置当前任务最多上传 ${maxImages} 张图片；已保留前 ${existingCount} 张，请继续选择不超过 ${maxImages - existingCount} 张。`
+          : `管理员设置当前任务最多上传 ${maxImages} 张图片，请重新选择。`,
         confirmText: '重新选择'
       });
       return;
     }
-    const current = {
+    const current = session || {
       controller: new AbortController(),
-      items: files.map((file) => {
+      items: [],
+      processingPromise: null
+    };
+    const firstNewIndex = current.items.length;
+    current.items.push(...files.map((file) => {
         const previewUrl = URL.createObjectURL(file);
         mediaPreviewUrls.add(previewUrl);
         return {
@@ -2004,13 +2059,13 @@ function memberCheckinForm(task) {
           uploadPromise: null,
           error: null
         };
-      }),
-      processingPromise: null
-    };
+      }));
     session = current;
+    form.images.value = '';
+    retryButton.hidden = true;
     renderPreviews(preview, current.items.map((item) => ({ previewUrl: item.previewUrl })));
     status.textContent = `正在处理 ${current.items.length} 张图片…`;
-    void runIndexes(current, current.items.map((_, index) => index));
+    void runIndexes(current, files.map((_, index) => firstNewIndex + index));
   };
 
   form.onsubmit = async (event) => {
@@ -2178,7 +2233,7 @@ function taskSubmissionForm(task) {
   app.innerHTML = `
     <header class="hero"><h1>${escapeHtml(task.name)}</h1><p>${escapeHtml(task.description)}</p></header>
     <section class="card"><form id="taskSend">
-      <div class="notice">上传前浏览器会自动压缩图片。支持 JPG、PNG、WebP，原图单张不超过 5MB，最多 ${task.imageLimit} 张。</div>
+      <div class="notice">上传前浏览器会自动压缩图片。支持 JPG、PNG、WebP，原图单张不超过 30MB，压缩后单张不超过 5MB，最多 ${task.imageLimit} 张。</div>
       <label>活动图片</label><input name="images" type="file" accept="image/jpeg,image/png,image/webp" multiple>
       <div class="image-preview" id="taskPreview">${(current?.images || []).map((image) => {
         const thumbUrl = image.thumbUrl || image.imageUrl || image.displayUrl || '';
@@ -2210,19 +2265,24 @@ function taskSubmissionForm(task) {
     });
   };
   form.images.onchange = () => {
-    mediaSession?.release();
-    mediaSession = null;
-    taskRetry.hidden = true;
+    const files = [...(form.images.files || [])];
+    if (!files.length) return;
     try {
-      if (form.images.files.length > task.imageLimit) throw new Error(`最多上传 ${task.imageLimit} 张图片`);
-      mediaSession = createMediaUploadSession(form.images.files, {
-        taskId: task.id, businessType: 'task', limit: task.imageLimit
-      }, {
-        previewContainer: document.querySelector('#taskPreview'),
-        statusElement: taskStatus
-      });
+      const activePromise = mediaSession
+        ? mediaSession.append(files)
+        : (() => {
+            mediaSession = createMediaUploadSession(files, {
+              taskId: task.id, businessType: 'task', limit: task.imageLimit
+            }, {
+              previewContainer: document.querySelector('#taskPreview'),
+              statusElement: taskStatus
+            });
+            return mediaSession.promise;
+          })();
+      form.images.value = '';
+      taskRetry.hidden = true;
       const currentSession = mediaSession;
-      void currentSession.promise.catch((error) => {
+      void activePromise.catch((error) => {
         if (currentSession !== mediaSession) return;
         taskStatus.textContent = error.message;
         taskRetry.hidden = !currentSession.errors.size;
@@ -2245,9 +2305,9 @@ function taskSubmissionForm(task) {
       const siblingButtons = [...form.querySelectorAll('[data-intent]')].filter((item) => item !== button);
       siblingButtons.forEach((item) => { item.disabled = true; });
       try {
-        if (form.images.files.length > task.imageLimit) throw new Error(`最多上传 ${task.imageLimit} 张图片`);
-        const media = form.images.files.length ? await mediaSession?.promise : [];
-        if (form.images.files.length && (!media || media.length !== form.images.files.length)) {
+        const selectedCount = mediaSession?.selected.length || 0;
+        const media = selectedCount ? await mediaSession.promise : [];
+        if (selectedCount && (!media || media.length !== selectedCount)) {
           throw new Error('图片尚未全部就绪，请重试失败图片。');
         }
         const result = await api(`/api/tasks/${task.id}/submission`, {

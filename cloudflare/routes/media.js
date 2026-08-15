@@ -27,7 +27,7 @@ const ALLOWED_TYPES = new Map([
   ['image/png', 'png'],
   ['image/webp', 'webp']
 ]);
-const MAX_FINAL_BYTES = 1_572_864;
+const MAX_FINAL_BYTES = 5 * 1024 * 1024;
 const THUMB_MAX_EDGE = 960;
 const PLAZA_THUMB_MAX_EDGE = 960;
 const DISPLAY_MAX_EDGE = 2048;

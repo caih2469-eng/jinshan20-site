@@ -29,8 +29,12 @@ test('member check-in respects the administrator image limit and submits all con
   const studentRoute = read('cloudflare/routes/student.js');
   const memberBody = app.match(/function memberCheckinForm\(task\) \{([\s\S]*?)\r?\n}\r?\n\r?\nfunction materialSubmissionForm/)?.[1] || '';
   assert.match(memberBody, /Number\(task\.memberImageLimit \|\| task\.imageLimit\)/);
-  assert.match(memberBody, /multiple required/);
-  assert.match(memberBody, /files\.length > maxImages/);
+  assert.match(memberBody, /type="file"[^>]*multiple/);
+  assert.match(memberBody, /existingCount \+ files\.length > maxImages/);
+  assert.match(memberBody, /const current = session \|\|/);
+  assert.match(memberBody, /current\.items\.push\(\.\.\.files\.map/);
+  assert.match(memberBody, /form\.images\.value = ''/);
+  assert.doesNotMatch(memberBody, /form\.images\.onchange = \(\) => \{\s*const files[^;]+;\s*releaseSession\(\)/);
   assert.match(memberBody, /session\?\.items\?\.map\(\(item\) => item\.mediaId\)/);
   assert.match(memberBody, /occurrenceDate: task\.occurrenceDate,[\s\S]*mediaIds/);
   assert.doesNotMatch(memberBody, /files\?\.\[0\]/);
