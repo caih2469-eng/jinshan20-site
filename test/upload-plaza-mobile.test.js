@@ -15,6 +15,9 @@ test('同一张照片的高清图与列表图并行申请并行直传', () => {
   assert.match(runtime, /api\('\/api\/media\/upload-pairs\/direct'/);
   assert.doesNotMatch(runtime, /requestVariantUploadIntent\(/);
   assert.doesNotMatch(runtime, /confirmPreparedImagePair\(/);
+  assert.match(runtime, /const \[display, thumb\] = await Promise\.all\(/);
+  assert.match(runtime, /quality: screenshotLike \? 0\.94 : 0\.90/);
+  assert.match(runtime, /quality: screenshotLike \? 0\.92 : 0\.88/);
   assert.match(genericFlow, /uploadPreparedImagePair\(prepared/);
   assert.match(memberFlow, /uploadPreparedImagePair\(prepared/);
   assert.doesNotMatch(genericFlow, /uploadCompressedImage\(prepared\.(?:display|thumb)/);

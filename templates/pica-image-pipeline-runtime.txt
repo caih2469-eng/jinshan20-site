@@ -120,37 +120,41 @@ const prepareImageVariants = async (file, options = {}) => {
     options.onProgress?.(65);
 
     const baseName = sourceFile.name.replace(/\.[^.]+$/, '') || 'image';
-    let displayCanvas = masterCanvas;
-    let display = await encodePipelineCanvas(pica, displayCanvas, {
-      baseName,
-      suffix: 'display',
-      quality: screenshotLike ? 0.94 : 0.90,
-      fallbackQuality: screenshotLike ? 0.90 : 0.86,
-      maxBytes: PICA_DISPLAY_MAX_BYTES
-    });
-
-    if (display.file.size > PICA_DISPLAY_MAX_BYTES
-        && Math.max(masterCanvas.width, masterCanvas.height) > 1600) {
-      const scale = 1600 / Math.max(masterCanvas.width, masterCanvas.height);
-      smallerDisplayCanvas = createPipelineCanvas(masterCanvas.width * scale, masterCanvas.height * scale);
-      await pica.resize(masterCanvas, smallerDisplayCanvas, { filter: 'mks2013' });
-      displayCanvas = smallerDisplayCanvas;
-      display = await encodePipelineCanvas(pica, displayCanvas, {
+    const encodeDisplay = async () => {
+      let displayCanvas = masterCanvas;
+      let display = await encodePipelineCanvas(pica, displayCanvas, {
         baseName,
         suffix: 'display',
-        quality: screenshotLike ? 0.91 : 0.87,
-        fallbackQuality: screenshotLike ? 0.88 : 0.84,
+        quality: screenshotLike ? 0.94 : 0.90,
+        fallbackQuality: screenshotLike ? 0.90 : 0.86,
         maxBytes: PICA_DISPLAY_MAX_BYTES
       });
-    }
-
-    const thumb = await encodePipelineCanvas(pica, thumbCanvas, {
-      baseName,
-      suffix: 'thumb',
-      quality: screenshotLike ? 0.92 : 0.88,
-      fallbackQuality: screenshotLike ? 0.89 : 0.84,
-      maxBytes: PICA_THUMB_MAX_BYTES
-    });
+      if (display.file.size > PICA_DISPLAY_MAX_BYTES
+          && Math.max(masterCanvas.width, masterCanvas.height) > 1600) {
+        const scale = 1600 / Math.max(masterCanvas.width, masterCanvas.height);
+        smallerDisplayCanvas = createPipelineCanvas(masterCanvas.width * scale, masterCanvas.height * scale);
+        await pica.resize(masterCanvas, smallerDisplayCanvas, { filter: 'mks2013' });
+        displayCanvas = smallerDisplayCanvas;
+        display = await encodePipelineCanvas(pica, displayCanvas, {
+          baseName,
+          suffix: 'display',
+          quality: screenshotLike ? 0.91 : 0.87,
+          fallbackQuality: screenshotLike ? 0.88 : 0.84,
+          maxBytes: PICA_DISPLAY_MAX_BYTES
+        });
+      }
+      return display;
+    };
+    const [display, thumb] = await Promise.all([
+      encodeDisplay(),
+      encodePipelineCanvas(pica, thumbCanvas, {
+        baseName,
+        suffix: 'thumb',
+        quality: screenshotLike ? 0.92 : 0.88,
+        fallbackQuality: screenshotLike ? 0.89 : 0.84,
+        maxBytes: PICA_THUMB_MAX_BYTES
+      })
+    ]);
     const previewUrl = URL.createObjectURL(display.file);
     mediaPreviewUrls.add(previewUrl);
     display.previewUrl = previewUrl;
