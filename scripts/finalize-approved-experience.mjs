@@ -100,6 +100,9 @@ for (const relativePath of target720TestFiles) {
 
 const replaceGeneratedTest = (relativePath, pattern, replacement, expectedTitle) => {
   const { file, source } = read(relativePath);
+  // A current test is policy, not generator output. Only migrate a historical
+  // test title; never rewrite an already-current assertion block.
+  if (source.includes(expectedTitle)) return;
   const next = pattern.test(source) ? source.replace(pattern, replacement.trim()) : source;
   // Product generators must not rewrite or loosen test policy. Historical test
   // titles vary across branches; leave an unmatched current test intact and
@@ -186,7 +189,9 @@ replaceGeneratedTest(
   assert.match(app, /quality: screenshotLike \? 0\.92 : 0\.88/);
   assert.match(app, /prepareImageVariantsMeasured\((?:sourceFile|selected\[index\])/);
   assert.match(app, /uploadPreparedImagePair\(prepared,/);
-  assert.match(app, /confirmVariantUpload\(thumbIntent, prepared\.thumb, display\.mediaId, signal\)/);
+  assert.match(app, /confirmPreparedImagePair\(/);
+  assert.match(app, /api\('\/api\/media\/upload-pairs\/confirm'/);
+  assert.doesNotMatch(app, /confirmVariantUpload\(thumbIntent, prepared\.thumb, display\.mediaId, signal\)/);
   assert.match(media, /THUMB_MAX_EDGE = 960/);
   assert.match(media, /PLAZA_THUMB_MAX_EDGE = 960/);
   assert.match(media, /DISPLAY_MAX_EDGE = 2048/);

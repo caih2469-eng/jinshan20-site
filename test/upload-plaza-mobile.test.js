@@ -13,8 +13,10 @@ test('同一张照片的高清图与列表图并行申请并行直传', () => {
   assert.match(runtime, /requestVariantUploadIntent\(prepared\.thumb/);
   assert.match(runtime, /const displayPut = putVariantToR2\(displayIntent/);
   assert.match(runtime, /const thumbPut = putVariantToR2\(thumbIntent/);
-  assert.match(runtime, /confirmVariantUpload\(displayIntent, prepared\.display, null/);
-  assert.match(runtime, /confirmVariantUpload\(thumbIntent, prepared\.thumb, display\.mediaId/);
+  assert.match(runtime, /await Promise\.all\(\[displayPut, thumbPut\]\)/);
+  assert.match(runtime, /confirmPreparedImagePair\(/);
+  assert.match(runtime, /api\('\/api\/media\/upload-pairs\/confirm'/);
+  assert.doesNotMatch(runtime, /confirmVariantUpload\(displayIntent, prepared\.display, null/);
   assert.match(genericFlow, /uploadPreparedImagePair\(prepared/);
   assert.match(memberFlow, /uploadPreparedImagePair\(prepared/);
   assert.doesNotMatch(genericFlow, /uploadCompressedImage\(prepared\.(?:display|thumb)/);

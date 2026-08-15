@@ -24,6 +24,8 @@ test('独立打卡服务与主站统一使用后台四校区打卡设置，未�
   assert.match(student, /const effectiveTask = applyInteractionCheckinSettings\(task, taskConfig\)/);
   assert.match(student, /taskWindowOpen\(effectiveTask, occurrenceDate, makeupAllowed\)/);
   assert.doesNotMatch(student, /taskWindowOpen\(task, occurrenceDate, makeupAllowed\)/);
+  assert.doesNotMatch(student, /const taskWindowOpen = \(task/);
+  assert.match(student, /resolveSubmissionOccurrence/);
 
   const [{ applyInteractionCheckinSettings, isTaskOccurrence, taskWindowOpen }, { shanghaiDate, shanghaiTime }] = await Promise.all([
     import('../cloudflare/services/student-dashboard.js'),
@@ -94,6 +96,27 @@ test('独立打卡服务与主站统一使用后台四校区打卡设置，未�
     `上海当前时间不在测试开放窗口：now=${currentTime}, schedule=${JSON.stringify(effectiveSchedule)}`);
   assert.equal(taskWindowOpen(effective, today, false), true,
     `后台真实保存的最新开放时段仍未覆盖旧任务：today=${today}, now=${currentTime}, effective=${JSON.stringify(effective)}`);
+});
+
+test('普通提交忽略QQ旧页面日期，只有明确补卡权限才保留历史日期', async () => {
+  const [{ resolveSubmissionOccurrence }, { shanghaiDate }] = await Promise.all([
+    import('../cloudflare/services/student-dashboard.js'),
+    import('../cloudflare/lib/runtime.js')
+  ]);
+  const today = shanghaiDate();
+  const staleDate = today === '2026-08-01' ? '2026-07-31' : '2026-08-01';
+  const ordinary = await resolveSubmissionOccurrence(staleDate, async () => false);
+  assert.deepEqual(ordinary, { occurrenceDate: today, makeupAllowed: false });
+  const makeup = await resolveSubmissionOccurrence(staleDate, async (date) => date === staleDate);
+  assert.deepEqual(makeup, { occurrenceDate: staleDate, makeupAllowed: true });
+
+  const student = read('cloudflare/routes/student.js');
+  const submissionStart = student.indexOf("const submissionMatch = route.match");
+  const submissionBlock = student.slice(submissionStart);
+  assert.match(submissionBlock, /const taskConfig = await readConfig\(env\)/);
+  assert.match(submissionBlock, /applyInteractionCheckinSettings\(task, taskConfig\)/);
+  assert.match(submissionBlock, /taskWindowOpen\(effectiveTask, occurrenceDate, makeupAllowed\)/);
+  assert.match(submissionBlock, /Number\(effectiveTask\.imageLimit\)/);
 });
 
 test('个人打卡fast上传并行读取任务队伍设置并保留960px/300KB规格', () => {

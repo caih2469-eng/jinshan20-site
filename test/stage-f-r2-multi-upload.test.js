@@ -115,6 +115,17 @@ test('队伍图片先接收常见大原图，再按5MB最终上限上传', () =>
   assert.match(appSource, /原图单张不超过 30MB，压缩后单张不超过 5MB/);
 });
 
+test('高清图和列表图并行上传后只用一次浏览器请求确认', () => {
+  const mediaRoute = fs.readFileSync(path.join(root, 'cloudflare', 'routes', 'media.js'), 'utf8');
+  const pairBlock = functionBlock('const uploadPreparedImagePair', 'const compressImage');
+  assert.match(pairBlock, /await Promise\.all\(\[displayPut, thumbPut\]\)/);
+  assert.match(pairBlock, /confirmPreparedImagePair\(/);
+  assert.doesNotMatch(pairBlock, /confirmVariantUpload\(displayIntent/);
+  assert.match(appSource, /api\('\/api\/media\/upload-pairs\/confirm'/);
+  assert.match(mediaRoute, /const confirmUploadPair = async/);
+  assert.match(mediaRoute, /url\.pathname === '\/api\/media\/upload-pairs\/confirm'/);
+});
+
 test('阶段F：确认后的多张媒体以固定次数批量认领，不按图片逐条查询D1', async () => {
   const runtimeUrl = pathToFileURL(path.join(root, 'cloudflare', 'lib', 'runtime.js')).href;
   const { claimConfirmedMedia } = await import(runtimeUrl);

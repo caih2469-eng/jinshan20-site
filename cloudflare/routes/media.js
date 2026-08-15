@@ -518,6 +518,33 @@ const confirmUpload = async (request, env, intentId) => {
   });
 };
 
+const confirmUploadPair = async (request, env) => {
+  const body = await readJson(request, 8 * 1024);
+  const displayIntentId = cleanText(body.displayIntentId, 80);
+  const thumbIntentId = cleanText(body.thumbIntentId, 80);
+  if (!displayIntentId || !thumbIntentId || displayIntentId === thumbIntentId) {
+    return json({ error: '图片确认编号无效' }, 400);
+  }
+  const internalHeaders = new Headers({ 'content-type': 'application/json; charset=utf-8' });
+  for (const name of ['authorization', 'cookie']) {
+    const value = request.headers.get(name);
+    if (value) internalHeaders.set(name, value);
+  }
+  const confirmOne = (intentId, parentMediaId = null) => confirmUpload(new Request(request.url, {
+    method: 'POST',
+    headers: internalHeaders,
+    body: JSON.stringify({ parentMediaId })
+  }), env, intentId);
+
+  const displayResponse = await confirmOne(displayIntentId);
+  const displayBody = await displayResponse.clone().json().catch(() => null);
+  if (!displayResponse.ok || !displayBody?.media?.id) return displayResponse;
+  const thumbResponse = await confirmOne(thumbIntentId, displayBody.media.id);
+  const thumbBody = await thumbResponse.clone().json().catch(() => null);
+  if (!thumbResponse.ok || !thumbBody?.media?.id) return thumbResponse;
+  return json({ display: displayBody.media, thumb: thumbBody.media });
+};
+
 const mediaHeaders = (object, contentType, cacheControl) => ({
   'content-type': object.httpMetadata?.contentType || contentType || 'application/octet-stream',
   'content-length': String(object.size),
@@ -646,6 +673,9 @@ export const handleMediaRoutes = async (request, env, ctx, url) => {
       baseDelayMs: 500,
       maxDelayMs: 8_000
     });
+  }
+  if (url.pathname === '/api/media/upload-pairs/confirm' && request.method === 'POST') {
+    return confirmUploadPair(request, env);
   }
   const confirm = url.pathname.match(/^\/api\/media\/upload-intents\/([^/]+)\/confirm$/);
   if (confirm && request.method === 'POST') return confirmUpload(request, env, decodeURIComponent(confirm[1]));

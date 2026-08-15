@@ -93,6 +93,20 @@ export const taskWindowOpen = (task, occurrenceDate = '', makeupAllowed = false)
   return true;
 };
 
+export const resolveSubmissionOccurrence = async (requestedDate = '', permissionForDate = async () => false) => {
+  const today = shanghaiDate();
+  const requested = /^\d{4}-\d{2}-\d{2}$/.test(String(requestedDate || ''))
+    ? String(requestedDate)
+    : '';
+  if (requested && requested !== today && await permissionForDate(requested)) {
+    return { occurrenceDate: requested, makeupAllowed: true };
+  }
+  return {
+    occurrenceDate: today,
+    makeupAllowed: await permissionForDate(today)
+  };
+};
+
 /* FINAL_CHECKIN_SETTINGS_V1 */
 export const applyInteractionCheckinSettings = (task, config) => {
   if (!task || task.trackId !== 'interaction') return task;

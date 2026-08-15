@@ -950,6 +950,21 @@ const confirmVariantUpload = async (intent, image, parentMediaId, signal) => {
   return { ...image, mediaId: confirmed.media.id };
 };
 
+const confirmPreparedImagePair = async (displayIntent, thumbIntent, prepared, signal) => {
+  const confirmed = await api('/api/media/upload-pairs/confirm', {
+    method: 'POST',
+    signal,
+    body: JSON.stringify({
+      displayIntentId: displayIntent.intentId,
+      thumbIntentId: thumbIntent.intentId
+    })
+  });
+  return {
+    display: { ...prepared.display, mediaId: confirmed.display.id },
+    thumb: { ...prepared.thumb, mediaId: confirmed.thumb.id }
+  };
+};
+
 const uploadPreparedImagePair = async (prepared, context, signal) => {
   const startedAt = performance.now();
   context.onStage?.('正在同时申请高清图和列表图上传地址…');
@@ -962,13 +977,11 @@ const uploadPreparedImagePair = async (prepared, context, signal) => {
   const displayPut = putVariantToR2(displayIntent, prepared.display, signal);
   const thumbPut = putVariantToR2(thumbIntent, prepared.thumb, signal);
 
-  await displayPut;
-  context.onStage?.('正在确认高清图…');
-  const display = await confirmVariantUpload(displayIntent, prepared.display, null, signal);
-
-  await thumbPut;
-  context.onStage?.('正在确认列表图…');
-  const thumb = await confirmVariantUpload(thumbIntent, prepared.thumb, display.mediaId, signal);
+  await Promise.all([displayPut, thumbPut]);
+  context.onStage?.('正在一次确认高清图和列表图…');
+  const { display, thumb } = await confirmPreparedImagePair(
+    displayIntent, thumbIntent, prepared, signal
+  );
 
   recordPerf('upload-pair', {
     displayBytes: Number(prepared.display?.file?.size || 0),

@@ -27,7 +27,9 @@ import {
   buildStudentTasks,
   mapWithConcurrency,
   submissionImagesForIds,
-  applyInteractionCheckinSettings
+  applyInteractionCheckinSettings,
+  resolveSubmissionOccurrence,
+  taskWindowOpen
 } from '../services/student-dashboard.js';
 
 const teamForUser = async (env, userId) => env.DB.prepare(
@@ -45,36 +47,6 @@ const membersForTeam = async (env, teamId) => {
       WHERE tm.team_id = ?1 ORDER BY tm.joined_at, u.student_id`
   ).bind(teamId).all();
   return results;
-};
-
-const isTaskOccurrence = (task, occurrenceDate = '') => {
-  const schedule = task.scheduleJson ? JSON.parse(task.scheduleJson) : null;
-  if (!schedule) return Date.now() >= Date.parse(task.startsAt) && Date.now() <= Date.parse(task.endsAt);
-  const today = shanghaiDate();
-  if (occurrenceDate && occurrenceDate !== today) return false;
-  if (today < schedule.activeStartDate || today > schedule.activeEndDate) return false;
-  if (schedule.scheduleType === 'activityDays') {
-    const [startYear, startMonth, startDay] = schedule.activeStartDate.split('-').map(Number);
-    const [year, month, day] = today.split('-').map(Number);
-    const activityDay = Math.floor((Date.UTC(year, month - 1, day)
-      - Date.UTC(startYear, startMonth - 1, startDay)) / 86400000) + 1;
-    if (!schedule.refreshDays.includes(activityDay)) return false;
-  }
-  if (schedule.scheduleType === 'weekly') {
-    const weekday = new Date(`${today}T12:00:00+08:00`).getUTCDay() || 7;
-    if (!schedule.weekdays.includes(weekday)) return false;
-  }
-  return true;
-};
-
-const taskWindowOpen = (task, occurrenceDate = '', makeupAllowed = false) => {
-  if (!isTaskOccurrence(task, occurrenceDate)) return false;
-  if (makeupAllowed) return true;
-  const schedule = task.scheduleJson ? JSON.parse(task.scheduleJson) : null;
-  if (!schedule) return true;
-  if (schedule.dailyStart && shanghaiTime() < schedule.dailyStart) return false;
-  if (schedule.dailyEnd && shanghaiTime() > schedule.dailyEnd) return false;
-  return true;
 };
 
 const submissionOwner = async (env, user, task) => {
@@ -329,8 +301,10 @@ export const handleStudentRoutes = async (request, env, ctx, url, authenticatedU
     const taskConfig = await readConfig(env);
     const effectiveTask = applyInteractionCheckinSettings(task, taskConfig);
     const body = await readJson(request);
-    const occurrenceDate = cleanText(body.occurrenceDate || shanghaiDate(), 10);
-    const makeupAllowed = await hasMakeupPermission(env, user.id, occurrenceDate);
+    const { occurrenceDate, makeupAllowed } = await resolveSubmissionOccurrence(
+      cleanText(body.occurrenceDate, 10),
+      (date) => hasMakeupPermission(env, user.id, date)
+    );
     if (!taskWindowOpen(effectiveTask, occurrenceDate, makeupAllowed)) return json({ error: '当前不在打卡时间范围内' }, 403);
     const team = await teamForUser(env, user.id);
     if (!team) return json({ error: '尚未分配队伍' }, 403);
@@ -482,9 +456,19 @@ export const handleStudentRoutes = async (request, env, ctx, url, authenticatedU
       return json({ error: '任务不存在' }, 404);
     }
     const body = await readJson(request);
-    const occurrenceDate = task.scheduleJson ? cleanText(body.occurrenceDate, 10) : '';
-    if (!taskWindowOpen(task, occurrenceDate)) return json({ error: '当前不在任务提交时间范围内' }, 403);
-    const owner = await submissionOwner(env, user, task);
+    const taskConfig = await readConfig(env);
+    const effectiveTask = applyInteractionCheckinSettings(task, taskConfig);
+    const occurrence = effectiveTask.scheduleJson
+      ? await resolveSubmissionOccurrence(
+          cleanText(body.occurrenceDate, 10),
+          (date) => hasMakeupPermission(env, user.id, date)
+        )
+      : { occurrenceDate: '', makeupAllowed: false };
+    const { occurrenceDate, makeupAllowed } = occurrence;
+    if (!taskWindowOpen(effectiveTask, occurrenceDate, makeupAllowed)) {
+      return json({ error: '当前不在任务提交时间范围内' }, 403);
+    }
+    const owner = await submissionOwner(env, user, effectiveTask);
     const intent = body.intent === 'draft' ? 'draft' : 'submitted';
     if (intent === 'submitted' && owner.type === 'team' && user.role !== 'admin') {
       if (!owner.team || owner.team.captainId !== user.id) {
@@ -505,8 +489,8 @@ export const handleStudentRoutes = async (request, env, ctx, url, authenticatedU
     }
     const copy = cleanText(body.copy, 2000);
     const plazaCopy = cleanText(body.copy, 2000);
-    const isPublic = task.trackId === 'interaction' && Boolean(body.isPublic);
-    if (intent === 'submitted' && task.copyRequirement && !copy) return json({ error: '请填写活动文案' }, 400);
+    const isPublic = effectiveTask.trackId === 'interaction' && Boolean(body.isPublic);
+    if (intent === 'submitted' && effectiveTask.copyRequirement && !copy) return json({ error: '请填写活动文案' }, 400);
     const current = await env.DB.prepare(
       `SELECT id,status,version FROM task_submissions
         WHERE task_id=?1 AND owner_type=?2 AND owner_id=?3 AND occurrence_date=?4`
@@ -519,7 +503,7 @@ export const handleStudentRoutes = async (request, env, ctx, url, authenticatedU
       return json({ error: '旧版Base64和双图片上传已停用，请重新选择图片' }, 400);
     }
     const uploaded = body.mediaIds?.length
-      ? await claimConfirmedMedia(env, body.mediaIds, user, task.id, 'task', Number(task.imageLimit))
+      ? await claimConfirmedMedia(env, body.mediaIds, user, task.id, 'task', Number(effectiveTask.imageLimit))
       : [];
     if (!uploaded.length && !current) return json({ error: '请至少上传一张图片' }, 400);
     const id = current?.id || crypto.randomUUID();
