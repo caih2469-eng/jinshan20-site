@@ -192,9 +192,8 @@ await writeFile(mobileTestPath, mobileTest, 'utf8');
 let studentFlowTest = await readFile(studentFlowTestPath, 'utf8');
 studentFlowTest = replaceNamedTest(
   studentFlowTest,
-  'student home keeps only the requested shortcuts and a working history modal root',
-  String.raw`test('student home keeps only the requested shortcuts and a working history modal root', () => {
-  execFileSync(process.execPath, ['scripts/apply-admin-dashboard-refactor.mjs'], { stdio: 'pipe' });
+  'student home keeps only confirmed shortcuts, team members and check-in',
+  String.raw`test('student home keeps only confirmed shortcuts, team members and check-in', () => {
   const app = read('public/app.js');
   const studentBody = app.match(/async function student\([\s\S]*?\r?\n\}\r?\n\r?\nfunction openStudentCheckinHistory/)?.[0]
     || app.match(/async function home\([\s\S]*?\r?\n\}\r?\n\r?\nfunction taskFormFields/)?.[0]
@@ -205,10 +204,13 @@ studentFlowTest = replaceNamedTest(
   assert.match(studentBody, /id="inbox"/);
   assert.match(studentBody, /id="teamCheckinStats"/);
   assert.match(studentBody, /id="modalRoot"/);
-  assert.doesNotMatch(studentBody, /id="ranking"/);
-  assert.doesNotMatch(studentBody, /profile-card/);
-  assert.doesNotMatch(studentBody, /id="myTeam"/);
-  assert.doesNotMatch(studentBody, /data-jump="activityTasks"/);
+  assert.match(studentBody, /id="myTeam"/);
+  assert.match(studentBody, /<h2>队伍成员<\/h2>/);
+  assert.match(studentBody, /id="activityTasks"/);
+  assert.match(studentBody, /data-member-task=/);
+  assert.doesNotMatch(studentBody, /id="ranking"|profile-card|我的资料/);
+  assert.doesNotMatch(studentBody, /team-summary|队伍名称|邀请码|成员人数/);
+  assert.doesNotMatch(studentBody, /最终截图证明|data-material=/);
 });`,
   '学生首页限定范围测试'
 );

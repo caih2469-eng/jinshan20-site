@@ -43,13 +43,12 @@ jobs:
           pnpm run check
           pnpm run check:text
           pnpm test
-      - name: Generate exact strict-p95 test build
+      - name: Stamp and verify exact strict-p95 test build
         shell: bash
         run: |
           set -euo pipefail
           node scripts/apply-build-asset-version.mjs
-          node scripts/apply-critical-path-p95-v4.mjs
-          node scripts/apply-mobile-real-under-1s-v5.mjs
+          node scripts/verify-student-home-scope.mjs
           grep -Fq "$GITHUB_SHA" public/bootstrap.js
           grep -Fq "$GITHUB_SHA" public/index.html
           grep -Fq "$GITHUB_SHA" public/entrance.html

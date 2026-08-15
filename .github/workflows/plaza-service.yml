@@ -54,6 +54,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: node scripts/verify-no-auto-patch-chain.mjs
       - run: node --check scripts/apply-plaza-detail-fast-path.mjs
       - run: node --check scripts/apply-plaza-detail-instant-open.mjs
       - run: node --check scripts/apply-plaza-service-split.mjs
@@ -79,8 +80,6 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: node scripts/apply-plaza-detail-fast-path.mjs
-      - run: node scripts/apply-plaza-service-split.mjs
       - name: Validate test Worker bundle with locked Wrangler
         working-directory: cloudflare/plaza-service
         run: pnpm exec wrangler deploy --dry-run --config wrangler.test.jsonc
@@ -140,8 +139,6 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: node scripts/apply-plaza-detail-fast-path.mjs
-      - run: node scripts/apply-plaza-service-split.mjs
       - name: Validate production Worker bundle with locked Wrangler
         working-directory: cloudflare/plaza-service
         run: pnpm exec wrangler deploy --dry-run --config wrangler.production.jsonc

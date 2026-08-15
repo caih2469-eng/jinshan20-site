@@ -59,19 +59,6 @@ const applyBuildAssetVersion = () => {
   }
 };
 
-const v3RuntimeIsReady = () => {
-  const paths = [
-    'public/app.js',
-    'public/bootstrap.js',
-    'templates/plaza-mobile-page.txt'
-  ];
-  return paths.every((relativePath) => {
-    const file = path.join(root, relativePath);
-    return fs.existsSync(file)
-      && fs.readFileSync(file, 'utf8').includes('PLAZA_PERFORMANCE_QUALITY_V3');
-  });
-};
-
 const assertStrictRuntime = () => {
   const required = [
     ['public/entrance.html', 'STRICT_P95_LOGIN_HTML_V4'],
@@ -105,21 +92,8 @@ const assertStrictRuntime = () => {
 };
 
 applyBuildAssetVersion();
-
-// The legacy generator chain calls this helper before V3 exists and again after V3
-// has converged. Only the final invocation is allowed to install the strict critical
-// path. V5 is layered after V4 so the home still paints first, while the Plaza starts
-// warming immediately after that paint and only downloads 960px list images in the
-// first-second budget. 2048px display assets are deliberately deferred.
-if (v3RuntimeIsReady()) {
-  await import('./apply-critical-path-p95-v4.mjs');
-  await import('./apply-login-bootstrap-handoff-v2.mjs');
-  await import('./apply-mobile-real-under-1s-v5.mjs');
-  // Later generators may add asset references. Stamp them with the exact build SHA too.
-  applyBuildAssetVersion();
-  assertStrictRuntime();
-  console.log('Converged strict p95 V4 + login handoff V2 + mobile real-under-1s V5 in final build step.');
-}
+assertStrictRuntime();
+console.log('Validated canonical strict runtime and stamped the exact asset version without applying overlays.');
 
 const hookKey = Symbol.for('jinshan20.buildAssetVersionBeforeExit');
 if (!globalThis[hookKey]) {

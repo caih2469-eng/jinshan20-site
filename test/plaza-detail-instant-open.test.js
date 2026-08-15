@@ -113,16 +113,16 @@ test('authenticated home consumes the login Plaza handoff or starts 960px warmup
   assert.match(plazaPageTemplate, /window\.__BOOTSTRAP_PLAZA_PROMISE__/);
 });
 
-test('all lifecycle generator chains run V5 last', () => {
-  for (const scriptName of ['prestart', 'precheck', 'pretest', 'prepare:image-pipeline']) {
-    const script = packageJson.scripts[scriptName];
-    assert.ok(script.includes('apply-mobile-real-under-1s-v5.mjs'), `${scriptName} 缺少V5最终覆盖层`);
-    assert.ok(
-      script.lastIndexOf('apply-mobile-real-under-1s-v5.mjs') > script.lastIndexOf('apply-critical-path-p95-v4.mjs'),
-      `${scriptName} 必须在V4之后执行V5`
-    );
+test('automatic lifecycle uses canonical source without generator overlays', () => {
+  for (const scriptName of ['prestart', 'precheck', 'pretest']) {
+    assert.equal(packageJson.scripts[scriptName], undefined, `${scriptName} 不应再运行补丁链`);
   }
-  assert.match(packageJson.scripts.check, /node --check scripts\/apply-mobile-real-under-1s-v5\.mjs/);
+  for (const scriptName of ['start', 'check', 'test', 'validate']) {
+    const script = packageJson.scripts[scriptName];
+    assert.doesNotMatch(script, /node scripts\/(?:apply|finalize)-(?!build-asset-version)/);
+  }
+  assert.match(packageJson.scripts.check, /verify-no-auto-patch-chain\.mjs/);
+  assert.match(packageJson.scripts.check, /verify-student-home-scope\.mjs/);
 });
 
 test('login form is immediately usable instead of waiting for the cinematic intro', () => {

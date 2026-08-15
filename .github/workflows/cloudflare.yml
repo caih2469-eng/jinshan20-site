@@ -63,48 +63,26 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Validate deployment generators
+      - name: Validate canonical deployment source
         shell: bash
         run: |
           set -euo pipefail
-          node --check scripts/finalize-mobile-admin-photo-fix.mjs
-          node --check scripts/apply-approved-flow-template.mjs
-          node --check scripts/apply-approved-backend.mjs
-          node --check scripts/apply-approved-frontend.mjs
-          node --check scripts/apply-approved-backfill.mjs
-          node --check scripts/finalize-approved-experience.mjs
-          node --check scripts/apply-approved-performance-diagnostics.mjs
-          node --check scripts/apply-approved-plaza-prefetch.mjs
-          node --check scripts/apply-pica-image-pipeline.mjs
-          node --check scripts/apply-plaza-mobile-layout.mjs
-          node --check scripts/apply-plaza-performance-quality-v3.mjs
-          node --check scripts/finalize-plaza-performance-quality-v3.mjs
           node --check scripts/apply-build-asset-version.mjs
           node --check scripts/browser-approved-preview.mjs
           node --check scripts/browser-plaza-mobile-preview.mjs
-      - name: Generate exact test build
+          node scripts/verify-no-auto-patch-chain.mjs
+          node scripts/verify-student-home-scope.mjs
+      - name: Stamp exact test asset version
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/apply-approved-flow-template.mjs
-          node scripts/apply-admin-dashboard-refactor.mjs
-          node scripts/apply-mobile-admin-photo-fix.mjs
-          node scripts/finalize-mobile-admin-photo-fix.mjs
-          node scripts/apply-approved-backend.mjs
-          node scripts/apply-approved-frontend.mjs
-          node scripts/apply-approved-backfill.mjs
-          node scripts/finalize-approved-experience.mjs
-          node scripts/apply-approved-performance-diagnostics.mjs
-          node scripts/apply-approved-plaza-prefetch.mjs
-          node scripts/apply-pica-image-pipeline.mjs
-          node scripts/apply-plaza-mobile-layout.mjs
-          node scripts/apply-plaza-performance-quality-v3.mjs
-          node scripts/finalize-plaza-performance-quality-v3.mjs
           node scripts/apply-build-asset-version.mjs
+          node scripts/verify-student-home-scope.mjs
       - name: Verify exact test asset version and V3 runtime
         shell: bash
         run: |
           set -euo pipefail
+          node scripts/verify-student-home-scope.mjs
           grep -Fq "$GITHUB_SHA" public/bootstrap.js
           grep -Fq "$GITHUB_SHA" public/index.html
           grep -Fq "$GITHUB_SHA" public/entrance.html
@@ -254,46 +232,24 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Validate production generators
+      - name: Validate canonical production source
         shell: bash
         run: |
           set -euo pipefail
-          node --check scripts/finalize-mobile-admin-photo-fix.mjs
-          node --check scripts/apply-approved-flow-template.mjs
-          node --check scripts/apply-approved-backend.mjs
-          node --check scripts/apply-approved-frontend.mjs
-          node --check scripts/apply-approved-backfill.mjs
-          node --check scripts/finalize-approved-experience.mjs
-          node --check scripts/apply-approved-performance-diagnostics.mjs
-          node --check scripts/apply-approved-plaza-prefetch.mjs
-          node --check scripts/apply-pica-image-pipeline.mjs
-          node --check scripts/apply-plaza-mobile-layout.mjs
-          node --check scripts/apply-plaza-performance-quality-v3.mjs
-          node --check scripts/finalize-plaza-performance-quality-v3.mjs
           node --check scripts/apply-build-asset-version.mjs
-      - name: Generate exact production build
+          node scripts/verify-no-auto-patch-chain.mjs
+          node scripts/verify-student-home-scope.mjs
+      - name: Stamp exact production asset version
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/apply-approved-flow-template.mjs
-          node scripts/apply-admin-dashboard-refactor.mjs
-          node scripts/apply-mobile-admin-photo-fix.mjs
-          node scripts/finalize-mobile-admin-photo-fix.mjs
-          node scripts/apply-approved-backend.mjs
-          node scripts/apply-approved-frontend.mjs
-          node scripts/apply-approved-backfill.mjs
-          node scripts/finalize-approved-experience.mjs
-          node scripts/apply-approved-performance-diagnostics.mjs
-          node scripts/apply-approved-plaza-prefetch.mjs
-          node scripts/apply-pica-image-pipeline.mjs
-          node scripts/apply-plaza-mobile-layout.mjs
-          node scripts/apply-plaza-performance-quality-v3.mjs
-          node scripts/finalize-plaza-performance-quality-v3.mjs
           node scripts/apply-build-asset-version.mjs
+          node scripts/verify-student-home-scope.mjs
       - name: Verify production contains only this commit's V3 assets
         shell: bash
         run: |
           set -euo pipefail
+          node scripts/verify-student-home-scope.mjs
           grep -Fq "$GITHUB_SHA" public/bootstrap.js
           grep -Fq "$GITHUB_SHA" public/index.html
           grep -Fq "$GITHUB_SHA" public/entrance.html

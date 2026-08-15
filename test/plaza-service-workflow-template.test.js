@@ -19,17 +19,17 @@ test('广场服务工作流先验证再部署，仓库内容只读且仅允许�
   assert.match(workflow, /pnpm test -- test\/plaza-detail-fast-path\.test\.js test\/plaza-detail-instant-open\.test\.js test\/plaza-service-split\.test\.js/);
 });
 
-test('专项验证复用正式pretest生命周期，部署阶段再生成Worker代码', () => {
+test('专项验证和部署直接使用已验证源码且不再生成Worker代码', () => {
   assert.match(workflow, /'scripts\/apply-plaza-detail-fast-path\.mjs'/);
   assert.match(workflow, /'scripts\/apply-plaza-detail-instant-open\.mjs'/);
   assert.match(workflow, /'templates\/plaza-detail-fast-path\.txt'/);
   const validateBlock = workflow.slice(workflow.indexOf('  validate:'), workflow.indexOf('  deploy-test:'));
   assert.match(validateBlock, /pnpm test -- test\/plaza-detail-fast-path\.test\.js/);
+  assert.match(validateBlock, /verify-no-auto-patch-chain\.mjs/);
   assert.doesNotMatch(validateBlock, /- run: node scripts\/apply-plaza-detail-fast-path\.mjs/);
   assert.doesNotMatch(validateBlock, /- run: node scripts\/apply-plaza-service-split\.mjs/);
   const productionBlock = workflow.slice(workflow.indexOf('  deploy-production:'), workflow.indexOf('  publish-production-status:'));
-  assert.ok(productionBlock.indexOf('node scripts/apply-plaza-detail-fast-path.mjs') >= 0);
-  assert.ok(productionBlock.indexOf('node scripts/apply-plaza-service-split.mjs') > productionBlock.indexOf('node scripts/apply-plaza-detail-fast-path.mjs'));
+  assert.doesNotMatch(productionBlock, /node scripts\/(?:apply|finalize)-/);
 });
 
 test('生产部署只允许main推送或main上的手动生产执行', () => {

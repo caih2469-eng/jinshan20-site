@@ -37,12 +37,12 @@ jobs:
           pnpm run check:text
           pnpm test
 
-      - name: Generate exact bugfix test build
+      - name: Stamp and verify exact bugfix test build
         shell: bash
         run: |
           set -euo pipefail
           node scripts/apply-build-asset-version.mjs
-          node scripts/apply-mobile-real-under-1s-v5.mjs
+          node scripts/verify-student-home-scope.mjs
           grep -q 'CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1' public/app.js
           grep -q 'CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1' cloudflare/routes/student.js
           grep -q 'CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1' cloudflare/routes/media.js
@@ -58,7 +58,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/apply-checkin-service-split.mjs
           grep -q 'CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1' cloudflare/routes/student.js
           grep -q 'FINAL_CHECKIN_SETTINGS_V1' cloudflare/services/student-dashboard.js
           grep -q 'checkinSettingsConfigured' cloudflare/lib/runtime.js

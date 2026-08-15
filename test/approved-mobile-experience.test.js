@@ -4,16 +4,25 @@ import fs from 'node:fs';
 
 const read = (path) => fs.readFileSync(path, 'utf8');
 
-test('用户首页仅包含确认的四项同排入口与累计打卡', () => {
+test('用户首页使用唯一确认版本且不回流旧模块', () => {
   const app = read('public/app.js');
-  assert.match(app, /student-shortcuts-four/);
-  assert.match(app, /id="historyCheckins"/);
-  assert.match(app, /id="plaza"/);
-  assert.match(app, /id="inbox"/);
-  assert.match(app, /id="teamCheckinStats"/);
-  assert.match(app, /个人累计/);
-  assert.match(app, /<h2>最终截图证明<\/h2>/);
-  assert.match(app, /data-material=/);
+  const studentBody = app.match(/async function student\([\s\S]*?\r?\n}\r?\n\r?\nfunction openStudentCheckinHistory/)?.[0] || '';
+  assert.match(app, /STUDENT_HOME_CANONICAL_V3/);
+  assert.match(studentBody, /student-shortcuts-four/);
+  assert.match(studentBody, /id="historyCheckins"/);
+  assert.match(studentBody, /id="plaza"/);
+  assert.match(studentBody, /id="inbox"/);
+  assert.match(studentBody, /id="teamCheckinStats"/);
+  assert.match(studentBody, /个人累计/);
+  assert.match(studentBody, /id="myTeam"/);
+  assert.match(studentBody, /<h2>队伍成员<\/h2>/);
+  assert.match(studentBody, /id="activityTasks"/);
+  assert.match(studentBody, /data-member-task=/);
+  assert.doesNotMatch(studentBody, /id="ranking"|profile-card|我的资料/);
+  assert.doesNotMatch(studentBody, /team-summary|队伍名称|邀请码|成员人数/);
+  assert.doesNotMatch(studentBody, /最终截图证明|data-material=/);
+  assert.match(app, /async function rankings\(/);
+  assert.match(app, /function materialSubmissionForm\(/);
 });
 
 test('活动广场、历史打卡和管理员列表图统一使用960px Pica链路', () => {

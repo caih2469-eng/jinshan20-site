@@ -69,8 +69,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: node scripts/verify-no-auto-patch-chain.mjs
       - run: node --check scripts/apply-checkin-service-split.mjs
-      - run: node scripts/apply-checkin-service-split.mjs
       - run: node --check cloudflare/checkin-worker.js
       - run: node --check cloudflare/routes/student.js
       - run: node --check cloudflare/worker.js
@@ -99,7 +99,6 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: node scripts/apply-checkin-service-split.mjs
       - name: Deploy test Worker
         working-directory: cloudflare/checkin-service
         env:
@@ -156,7 +155,6 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: node scripts/apply-checkin-service-split.mjs
       - name: Deploy production Worker
         working-directory: cloudflare/checkin-service
         env:

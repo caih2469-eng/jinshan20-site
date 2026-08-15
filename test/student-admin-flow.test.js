@@ -4,15 +4,24 @@ const fs = require('node:fs');
 
 const read = (path) => fs.readFileSync(path, 'utf8');
 
-test('student home keeps the existing shortcuts and a working history modal root', () => {
+test('student home keeps only confirmed shortcuts, team members and check-in', () => {
   const app = read('public/app.js');
-  const studentBody = app.match(/async function student\([\s\S]*?\r?\n}\r?\n\r?\nfunction openStudentCheckinHistory/)?.[0] || '';
+  const studentBody = app.match(/async function student\([\s\S]*?\r?\n\}\r?\n\r?\nfunction openStudentCheckinHistory/)?.[0]
+    || app.match(/async function home\([\s\S]*?\r?\n\}\r?\n\r?\nfunction taskFormFields/)?.[0]
+    || '';
+  assert.ok(studentBody.length > 0, '未定位到学生首页函数');
   assert.match(studentBody, /id="historyCheckins"/);
   assert.match(studentBody, /id="plaza"/);
   assert.match(studentBody, /id="inbox"/);
+  assert.match(studentBody, /id="teamCheckinStats"/);
   assert.match(studentBody, /id="modalRoot"/);
-  assert.match(studentBody, /id="ranking"/);
   assert.match(studentBody, /id="myTeam"/);
+  assert.match(studentBody, /<h2>队伍成员<\/h2>/);
+  assert.match(studentBody, /id="activityTasks"/);
+  assert.match(studentBody, /data-member-task=/);
+  assert.doesNotMatch(studentBody, /id="ranking"|profile-card|我的资料/);
+  assert.doesNotMatch(studentBody, /team-summary|队伍名称|邀请码|成员人数/);
+  assert.doesNotMatch(studentBody, /最终截图证明|data-material=/);
 });
 
 test('member check-in respects the administrator image limit and submits all confirmed media ids', () => {
