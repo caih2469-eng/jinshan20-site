@@ -113,9 +113,9 @@ const pairedUploadTest = String.raw`test('单人打卡使用Pica生成2048px高�
   assert.doesNotMatch(memberBody, /uploadCompressedImage\(prepared\.(?:display|thumb)/);
   assert.match(app, /PICA_DISPLAY_MAX_EDGE = 2048/);
   assert.match(app, /PICA_THUMB_MAX_EDGE = 960/);
-  assert.match(app, /Promise\.all\(\[\s*requestVariantUploadIntent\(prepared\.display/);
-  assert.match(app, /const displayPut = putVariantToR2/);
-  assert.match(app, /const thumbPut = putVariantToR2/);
+  assert.match(app, /api\('\/api\/media\/upload-pairs\/direct'/);
+  assert.match(app, /const form = new FormData\(\)/);
+  assert.doesNotMatch(app, /requestVariantUploadIntent\(/);
 });`;
 memberTest = replaceNamedTest(
   memberTest,
@@ -232,9 +232,9 @@ mobileAdminTest = replaceNamedTest(
   assert.match(app, /quality: screenshotLike \? 0\.92 : 0\.88/);
   assert.match(app, /prepareImageVariantsMeasured\((?:sourceFile|selected\[index\])/);
   assert.match(app, /uploadPreparedImagePair\(prepared,/);
-  assert.match(app, /confirmPreparedImagePair\(/);
-  assert.match(app, /api\('\/api\/media\/upload-pairs\/confirm'/);
-  assert.doesNotMatch(app, /confirmVariantUpload\(thumbIntent, prepared\.thumb, display\.mediaId, signal\)/);
+  assert.match(app, /api\('\/api\/media\/upload-pairs\/direct'/);
+  assert.match(app, /const form = new FormData\(\)/);
+  assert.doesNotMatch(app, /confirmPreparedImagePair\(/);
   assert.match(media, /THUMB_MAX_EDGE = 960/);
   assert.match(media, /PLAZA_THUMB_MAX_EDGE = 960/);
   assert.match(media, /DISPLAY_MAX_EDGE = 2048/);

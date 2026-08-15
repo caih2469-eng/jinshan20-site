@@ -917,71 +917,23 @@ const prepareImageVariantsMeasured = async (file, options = {}) => {
   }
 };
 
-const requestVariantUploadIntent = (image, context, variant, signal) => api('/api/media/upload-intents', {
-  method: 'POST',
-  signal,
-  body: JSON.stringify({
-    taskId: context.taskId || null,
-    businessType: context.businessType,
-    mimeType: image.mimeType,
-    fileSize: image.file.size,
-    width: image.width,
-    height: image.height,
-    variant
-  })
-});
-
-const putVariantToR2 = async (intent, image, signal) => {
-  const response = await uploadBinary(intent.uploadUrl, {
-    method: 'PUT',
-    headers: intent.headers,
-    body: image.file,
-    signal
-  });
-  if (!response.ok) throw new Error(`图片直传失败（${response.status}），请重新选择图片。`);
-};
-
-const confirmVariantUpload = async (intent, image, parentMediaId, signal) => {
-  const confirmed = await api(`/api/media/upload-intents/${encodeURIComponent(intent.intentId)}/confirm`, {
-    method: 'POST',
-    signal,
-    body: JSON.stringify({ parentMediaId: parentMediaId || null })
-  });
-  return { ...image, mediaId: confirmed.media.id };
-};
-
-const confirmPreparedImagePair = async (displayIntent, thumbIntent, prepared, signal) => {
-  const confirmed = await api('/api/media/upload-pairs/confirm', {
-    method: 'POST',
-    signal,
-    body: JSON.stringify({
-      displayIntentId: displayIntent.intentId,
-      thumbIntentId: thumbIntent.intentId
-    })
-  });
-  return {
-    display: { ...prepared.display, mediaId: confirmed.display.id },
-    thumb: { ...prepared.thumb, mediaId: confirmed.thumb.id }
-  };
-};
-
 const uploadPreparedImagePair = async (prepared, context, signal) => {
   const startedAt = performance.now();
-  context.onStage?.('正在同时申请高清图和列表图上传地址…');
-  const [displayIntent, thumbIntent] = await Promise.all([
-    requestVariantUploadIntent(prepared.display, context, 'display', signal),
-    requestVariantUploadIntent(prepared.thumb, context, 'thumb', signal)
-  ]);
-
-  context.onStage?.('正在并行上传高清图和列表图…');
-  const displayPut = putVariantToR2(displayIntent, prepared.display, signal);
-  const thumbPut = putVariantToR2(thumbIntent, prepared.thumb, signal);
-
-  await Promise.all([displayPut, thumbPut]);
-  context.onStage?.('正在一次确认高清图和列表图…');
-  const { display, thumb } = await confirmPreparedImagePair(
-    displayIntent, thumbIntent, prepared, signal
-  );
+  context.onStage?.('正在通过极速线路上传高清图和列表图…');
+  const form = new FormData();
+  form.append('taskId', context.taskId || '');
+  form.append('businessType', context.businessType);
+  form.append('displayWidth', String(prepared.display.width));
+  form.append('displayHeight', String(prepared.display.height));
+  form.append('thumbWidth', String(prepared.thumb.width));
+  form.append('thumbHeight', String(prepared.thumb.height));
+  form.append('display', prepared.display.file, prepared.display.file.name);
+  form.append('thumb', prepared.thumb.file, prepared.thumb.file.name);
+  const confirmed = await api('/api/media/upload-pairs/direct', {
+    method: 'POST', signal, body: form, timeoutMs: 45_000
+  });
+  const display = { ...prepared.display, mediaId: confirmed.display.id };
+  const thumb = { ...prepared.thumb, mediaId: confirmed.thumb.id };
 
   recordPerf('upload-pair', {
     displayBytes: Number(prepared.display?.file?.size || 0),
@@ -1681,7 +1633,7 @@ async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
           <div class="member-list compact">${(task.teamProgress?.members || []).map((member) => `<span class="${member.checked ? 'checked-member' : ''}">${escapeHtml(member.name)} · ${escapeHtml(member.studentId)} ${member.checked ? '✓ 已打卡' : '未打卡'}</span>`).join('')}</div>
         </div>
         <button data-member-task="${task.id}" ${task.availabilityError ? 'disabled' : ''}>${task.memberCheckin ? '更新个人打卡' : '个人打卡'}</button>
-        ${task.isCaptain ? `<button class="secondary" data-task="${task.id}" ${task.availabilityError || Number(task.teamProgress?.total || 0) === 0 || Number(task.teamProgress?.completed || 0) < Number(task.teamProgress?.total || 0) || ['submitted','approved'].includes(task.submission?.status) ? 'disabled' : ''}>${task.submission ? '继续编辑队伍作品' : '队长汇总提交'}</button>${Number(task.teamProgress?.total || 0) > 0 && Number(task.teamProgress?.completed || 0) < Number(task.teamProgress?.total || 0) ? '<p class="bad">所有队员完成当天个人打卡后，队长才能汇总提交。</p>' : ''}` : '<p class="muted">队伍作品由管理员指定的队长汇总提交。</p>'}
+        ${task.isCaptain ? `<button class="secondary" data-task="${task.id}" ${task.availabilityError || Number(task.teamProgress?.total || 0) === 0 || Number(task.teamProgress?.completed || 0) < Number(task.teamProgress?.total || 0) || task.submission?.status === 'approved' ? 'disabled' : ''}>${task.submission ? '继续编辑队伍作品' : '队长汇总提交'}</button>${Number(task.teamProgress?.total || 0) > 0 && Number(task.teamProgress?.completed || 0) < Number(task.teamProgress?.total || 0) ? '<p class="bad">所有队员完成当天个人打卡后，队长才能汇总提交。</p>' : ''}` : '<p class="muted">队伍作品由管理员指定的队长汇总提交。</p>'}
       ` : `<button data-task="${task.id}" ${task.availabilityError || ['submitted','approved'].includes(task.submission?.status) ? 'disabled' : ''}>${task.submission ? '继续编辑' : '个人打卡'}</button>`}
       ${task.availabilityError ? `<p class="bad">${escapeHtml(task.availabilityError)}</p>` : ''}
     </article>`).join('');
@@ -2854,7 +2806,7 @@ async function openPlazaPost(postId, sort, page, month, countView = true, query 
         </div>
       </button>`).join('')}</div>
     <p>${escapeHtml(post.copy)}</p>
-    <div class="row"><span class="muted">${formatDate(post.publishedAt)} · 浏览 <span data-detail-views>${post.viewCount}</span> · 今日剩余 ${post.likeQuota.remaining}/5 个赞</span><button class="right ${post.liked ? '' : 'secondary'}" id="likePost">${post.liked ? '取消点赞' : '点赞'} <span id="likeCount">${post.likeCount}</span></button></div>
+    <div class="row"><span class="muted">${formatDate(post.publishedAt)} · 浏览 <span data-detail-views>${post.viewCount}</span> · 今日剩余 <span data-like-quota>${post.likeQuota.remaining}/5</span> 个赞</span><button class="right ${post.liked ? '' : 'secondary'}" id="likePost">${post.liked ? '取消点赞' : '点赞'} <span id="likeCount">${post.likeCount}</span></button></div>
     <section class="comments-panel">
       <h3>评论 <span id="commentCount">${post.commentCount}</span></h3>
       <form id="commentForm"><textarea name="content" maxlength="500" required placeholder="写下你的评论（最多500字）"></textarea><button disabled>发布评论</button></form>
@@ -2957,13 +2909,20 @@ async function openPlazaPost(postId, sort, page, month, countView = true, query 
         body: JSON.stringify({ liked: !post.liked })
       });
       post.liked = result.liked;
-      if (post.liked !== previousLiked) post.likeCount += post.liked ? 1 : -1;
+      post.likeCount = Number.isFinite(Number(result.likeCount))
+        ? Number(result.likeCount)
+        : post.likeCount + (post.liked !== previousLiked ? (post.liked ? 1 : -1) : 0);
+      if (result.likeQuota && Number.isFinite(Number(result.likeQuota.remaining))) {
+        post.likeQuota = result.likeQuota;
+        const quota = root.querySelector('[data-like-quota]');
+        if (quota) quota.textContent = `${post.likeQuota.remaining}/5`;
+      }
       button.dataset.loading = 'false';
       button.disabled = false;
       button.innerHTML = `${post.liked ? '取消点赞' : '点赞'} <span id="likeCount">${post.likeCount}</span>`;
       button.classList.toggle('secondary', !post.liked);
-      patchPlazaPostCache(postId, { likeCount: post.likeCount, liked: post.liked });
-      updatePlazaCachePost(postId, { likeCount: post.likeCount, liked: post.liked });
+      patchPlazaPostCache(postId, { likeCount: post.likeCount, liked: post.liked, likeQuota: post.likeQuota });
+      updatePlazaCachePost(postId, { likeCount: post.likeCount, liked: post.liked, likeQuota: post.likeQuota });
       updateVisiblePlazaCard(postId, { likeCount: post.likeCount });
       rankingViewCache.clear();
     } catch (error) {

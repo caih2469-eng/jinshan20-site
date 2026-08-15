@@ -71,6 +71,20 @@ const postDetails = async (env, post, userId = null) => {
   };
 };
 
+const likeState = async (env, postId, userId) => {
+  const counts = await env.DB.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM plaza_likes WHERE post_id=?1) AS likes,
+       (SELECT COUNT(*) FROM plaza_likes
+         WHERE user_id=?2 AND date(liked_at,'+8 hours')=?3) AS userLikesToday`
+  ).bind(postId, userId, shanghaiDate()).first();
+  const used = Number(counts?.userLikesToday || 0);
+  return {
+    likeCount: Number(counts?.likes || 0),
+    likeQuota: { used, remaining: Math.max(0, 5 - used) }
+  };
+};
+
 const periodBounds = (period, key) => {
   const today = shanghaiDate();
   if (period === 'month') {
@@ -275,7 +289,7 @@ export const handlePlazaRoutes = async (request, env, ctx, url, authenticatedUse
     const body = await request.json();
     if (body.liked === false) {
       await env.DB.prepare('DELETE FROM plaza_likes WHERE post_id=?1 AND user_id=?2').bind(postId, user.id).run();
-      return json({ ok: true, liked: false });
+      return json({ ok: true, liked: false, ...await likeState(env, postId, user.id) });
     }
     const result = await env.DB.prepare(
       `INSERT INTO plaza_likes (post_id,user_id,liked_at)
@@ -293,7 +307,7 @@ export const handlePlazaRoutes = async (request, env, ctx, url, authenticatedUse
       ).bind(postId, user.id).first();
       if (!already) return json({ error: '今天最多点赞 5 个作品' }, 429);
     }
-    return json({ ok: true, liked: true });
+    return json({ ok: true, liked: true, ...await likeState(env, postId, user.id) });
   }
 
   const commentsMatch = route.match(/^\/api\/plaza\/([^/]+)\/comments$/);

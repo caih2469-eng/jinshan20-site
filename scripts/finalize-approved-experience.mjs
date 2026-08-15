@@ -189,9 +189,9 @@ replaceGeneratedTest(
   assert.match(app, /quality: screenshotLike \? 0\.92 : 0\.88/);
   assert.match(app, /prepareImageVariantsMeasured\((?:sourceFile|selected\[index\])/);
   assert.match(app, /uploadPreparedImagePair\(prepared,/);
-  assert.match(app, /confirmPreparedImagePair\(/);
-  assert.match(app, /api\('\/api\/media\/upload-pairs\/confirm'/);
-  assert.doesNotMatch(app, /confirmVariantUpload\(thumbIntent, prepared\.thumb, display\.mediaId, signal\)/);
+  assert.match(app, /api\('\/api\/media\/upload-pairs\/direct'/);
+  assert.match(app, /const form = new FormData\(\)/);
+  assert.doesNotMatch(app, /confirmPreparedImagePair\(/);
   assert.match(media, /THUMB_MAX_EDGE = 960/);
   assert.match(media, /PLAZA_THUMB_MAX_EDGE = 960/);
   assert.match(media, /DISPLAY_MAX_EDGE = 2048/);

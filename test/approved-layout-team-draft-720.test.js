@@ -64,3 +64,12 @@ test('管理端打卡设置紧凑且帖子固定六列', () => {
   assert.match(style, /checkin-settings-form input\[type="checkbox"\][\s\S]*width:\s*18px/);
   assert.match(style, /weekday-options[\s\S]*repeat\(7,minmax\(0,1fr\)\)/);
 });
+
+test('team captain can edit a submitted but unapproved team work', () => {
+  const app = read('public/app.js');
+  const student = read('cloudflare/routes/student.js');
+  const teamButton = app.match(/\$\{task\.isCaptain \? `<button class="secondary" data-task="\$\{task\.id\}"[^\n]+/u)?.[0] || '';
+  assert.match(teamButton, /task\.submission\?\.status === 'approved' \? 'disabled'/);
+  assert.doesNotMatch(teamButton, /\['submitted','approved'\]\.includes\(task\.submission\?\.status\)/);
+  assert.match(student, /current\?\.status === 'submitted' && owner\.type !== 'team'/);
+});

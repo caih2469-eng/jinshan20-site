@@ -180,71 +180,23 @@ const prepareImageVariantsMeasured = async (file, options = {}) => {
   }
 };
 
-const requestVariantUploadIntent = (image, context, variant, signal) => api('/api/media/upload-intents', {
-  method: 'POST',
-  signal,
-  body: JSON.stringify({
-    taskId: context.taskId || null,
-    businessType: context.businessType,
-    mimeType: image.mimeType,
-    fileSize: image.file.size,
-    width: image.width,
-    height: image.height,
-    variant
-  })
-});
-
-const putVariantToR2 = async (intent, image, signal) => {
-  const response = await uploadBinary(intent.uploadUrl, {
-    method: 'PUT',
-    headers: intent.headers,
-    body: image.file,
-    signal
-  });
-  if (!response.ok) throw new Error(`图片直传失败（${response.status}），请重新选择图片。`);
-};
-
-const confirmVariantUpload = async (intent, image, parentMediaId, signal) => {
-  const confirmed = await api(`/api/media/upload-intents/${encodeURIComponent(intent.intentId)}/confirm`, {
-    method: 'POST',
-    signal,
-    body: JSON.stringify({ parentMediaId: parentMediaId || null })
-  });
-  return { ...image, mediaId: confirmed.media.id };
-};
-
-const confirmPreparedImagePair = async (displayIntent, thumbIntent, prepared, signal) => {
-  const confirmed = await api('/api/media/upload-pairs/confirm', {
-    method: 'POST',
-    signal,
-    body: JSON.stringify({
-      displayIntentId: displayIntent.intentId,
-      thumbIntentId: thumbIntent.intentId
-    })
-  });
-  return {
-    display: { ...prepared.display, mediaId: confirmed.display.id },
-    thumb: { ...prepared.thumb, mediaId: confirmed.thumb.id }
-  };
-};
-
 const uploadPreparedImagePair = async (prepared, context, signal) => {
   const startedAt = performance.now();
-  context.onStage?.('正在同时申请高清图和列表图上传地址…');
-  const [displayIntent, thumbIntent] = await Promise.all([
-    requestVariantUploadIntent(prepared.display, context, 'display', signal),
-    requestVariantUploadIntent(prepared.thumb, context, 'thumb', signal)
-  ]);
-
-  context.onStage?.('正在并行上传高清图和列表图…');
-  const displayPut = putVariantToR2(displayIntent, prepared.display, signal);
-  const thumbPut = putVariantToR2(thumbIntent, prepared.thumb, signal);
-
-  await Promise.all([displayPut, thumbPut]);
-  context.onStage?.('正在一次确认高清图和列表图…');
-  const { display, thumb } = await confirmPreparedImagePair(
-    displayIntent, thumbIntent, prepared, signal
-  );
+  context.onStage?.('正在通过极速线路上传高清图和列表图…');
+  const form = new FormData();
+  form.append('taskId', context.taskId || '');
+  form.append('businessType', context.businessType);
+  form.append('displayWidth', String(prepared.display.width));
+  form.append('displayHeight', String(prepared.display.height));
+  form.append('thumbWidth', String(prepared.thumb.width));
+  form.append('thumbHeight', String(prepared.thumb.height));
+  form.append('display', prepared.display.file, prepared.display.file.name);
+  form.append('thumb', prepared.thumb.file, prepared.thumb.file.name);
+  const confirmed = await api('/api/media/upload-pairs/direct', {
+    method: 'POST', signal, body: form, timeoutMs: 45_000
+  });
+  const display = { ...prepared.display, mediaId: confirmed.display.id };
+  const thumb = { ...prepared.thumb, mediaId: confirmed.thumb.id };
 
   recordPerf('upload-pair', {
     displayBytes: Number(prepared.display?.file?.size || 0),

@@ -495,7 +495,7 @@ export const handleStudentRoutes = async (request, env, ctx, url, authenticatedU
       `SELECT id,status,version FROM task_submissions
         WHERE task_id=?1 AND owner_type=?2 AND owner_id=?3 AND occurrence_date=?4`
     ).bind(task.id, owner.type, owner.id, occurrenceDate).first();
-    if (current?.status === 'submitted' || current?.status === 'approved') {
+    if (current?.status === 'approved' || (current?.status === 'submitted' && owner.type !== 'team')) {
       return json({ error: '该任务已最终提交，不能重复提交' }, 409);
     }
     if (current && Number(body.version) !== Number(current.version)) return json({ error: '内容已被队友更新，请刷新后重试' }, 409);

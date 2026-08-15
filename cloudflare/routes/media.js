@@ -441,6 +441,110 @@ const createUploadIntent = async (request, env) => {
   }, 201);
 };
 
+const directUploadPart = async (form, field, businessType) => {
+  const file = form.get(field);
+  const mimeType = cleanText(file?.type, 40).toLowerCase();
+  const extension = ALLOWED_TYPES.get(mimeType);
+  const size = Number(file?.size);
+  const width = Number(form.get(`${field}Width`));
+  const height = Number(form.get(`${field}Height`));
+  const maxEdge = field === 'thumb'
+    ? (businessType === 'task' ? PLAZA_THUMB_MAX_EDGE : THUMB_MAX_EDGE)
+    : DISPLAY_MAX_EDGE;
+  if (!file || typeof file.arrayBuffer !== 'function' || !extension
+      || !Number.isInteger(size) || size < 1 || size > MAX_FINAL_BYTES
+      || !Number.isInteger(width) || width < 1 || width > maxEdge
+      || !Number.isInteger(height) || height < 1 || height > maxEdge) {
+    throw Object.assign(new Error('压缩图片的大小、格式或尺寸不符合要求'), { status: 400 });
+  }
+  const header = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+  if (!signatureMatches(header, mimeType)) {
+    throw Object.assign(new Error('图片真实格式校验失败'), { status: 415 });
+  }
+  return { file, mimeType, extension, size, width, height };
+};
+
+const directUploadPair = async (request, env) => {
+  const auth = await requireUser(request, env);
+  if (auth.error) return auth.error;
+  const form = await request.formData();
+  const businessType = cleanText(form.get('businessType'), 40);
+  const taskId = cleanText(form.get('taskId'), 80) || null;
+  if (!['task', 'member-checkin', 'meal-checkin', 'material-image', 'admin-makeup'].includes(businessType)) {
+    return json({ error: '不支持的图片上传用途' }, 415);
+  }
+  const [display, thumb] = await Promise.all([
+    directUploadPart(form, 'display', businessType),
+    directUploadPart(form, 'thumb', businessType)
+  ]);
+  if (taskId) {
+    const taskTable = businessType === 'material-image' ? 'material_tasks' : 'tasks';
+    const task = await env.DB.prepare(`SELECT id,status FROM ${taskTable} WHERE id=?1`).bind(taskId).first();
+    if (!task || task.status !== 'published') return json({ error: '任务不存在或不可提交' }, 404);
+  }
+
+  const displayId = crypto.randomUUID();
+  const thumbId = crypto.randomUUID();
+  const displayKey = `media/${env.ENVIRONMENT || 'test'}/${auth.user.id}/display/${displayId}.${display.extension}`;
+  const thumbKey = `media/${env.ENVIRONMENT || 'test'}/${auth.user.id}/thumb/${thumbId}.${thumb.extension}`;
+  const now = nowIso();
+  const expiresAt = new Date(Date.now() + INTENT_TTL_SECONDS * 1000).toISOString();
+  try {
+    const [displayObject, thumbObject] = await Promise.all([
+      env.UPLOADS.put(displayKey, display.file, {
+        httpMetadata: { contentType: display.mimeType }, customMetadata: { private: 'true' }
+      }),
+      env.UPLOADS.put(thumbKey, thumb.file, {
+        httpMetadata: { contentType: thumb.mimeType }, customMetadata: { private: 'true' }
+      })
+    ]);
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO media_upload_intents
+          (id,user_id,task_id,business_type,object_key,mime_type,expected_size,width,height,status,
+           expires_at,confirmed_at,created_at,updated_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,'confirmed',?10,?11,?11,?11)`
+      ).bind(displayId, auth.user.id, taskId, businessType, displayKey, display.mimeType,
+        display.size, display.width, display.height, expiresAt, now),
+      env.DB.prepare(
+        `INSERT INTO media_upload_intents
+          (id,user_id,task_id,business_type,object_key,mime_type,expected_size,width,height,status,
+           expires_at,confirmed_at,created_at,updated_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,'confirmed',?10,?11,?11,?11)`
+      ).bind(thumbId, auth.user.id, taskId, `${businessType}:thumb`, thumbKey, thumb.mimeType,
+        thumb.size, thumb.width, thumb.height, expiresAt, now),
+      env.DB.prepare(
+        `INSERT INTO media_objects
+          (id,owner_user_id,task_id,business_type,object_key,mime_type,file_size,width,height,etag,
+           visibility,business_id,created_at,updated_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'private',NULL,?11,?11)`
+      ).bind(displayId, auth.user.id, taskId, businessType, displayKey, display.mimeType,
+        display.size, display.width, display.height, displayObject?.etag || displayObject?.httpEtag || '', now),
+      env.DB.prepare(
+        `INSERT INTO media_objects
+          (id,owner_user_id,task_id,business_type,object_key,mime_type,file_size,width,height,etag,
+           visibility,business_id,created_at,updated_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'private',?11,?12,?12)`
+      ).bind(thumbId, auth.user.id, taskId, `${businessType}:thumb`, thumbKey, thumb.mimeType,
+        thumb.size, thumb.width, thumb.height, thumbObject?.etag || thumbObject?.httpEtag || '', displayId, now)
+    ]);
+  } catch (error) {
+    await Promise.all([
+      env.UPLOADS.delete(displayKey).catch(() => null),
+      env.UPLOADS.delete(thumbKey).catch(() => null),
+      env.DB.batch([
+        env.DB.prepare('DELETE FROM media_objects WHERE id IN (?1,?2)').bind(displayId, thumbId),
+        env.DB.prepare('DELETE FROM media_upload_intents WHERE id IN (?1,?2)').bind(displayId, thumbId)
+      ]).catch(() => null)
+    ]);
+    throw error;
+  }
+  return json({
+    display: { id: displayId, mimeType: display.mimeType, fileSize: display.size, width: display.width, height: display.height },
+    thumb: { id: thumbId, mimeType: thumb.mimeType, fileSize: thumb.size, width: thumb.width, height: thumb.height }
+  }, 201);
+};
+
 const confirmUpload = async (request, env, intentId) => {
   const auth = await requireUser(request, env);
   if (auth.error) return auth.error;
@@ -676,6 +780,9 @@ export const handleMediaRoutes = async (request, env, ctx, url) => {
   }
   if (url.pathname === '/api/media/upload-pairs/confirm' && request.method === 'POST') {
     return confirmUploadPair(request, env);
+  }
+  if (url.pathname === '/api/media/upload-pairs/direct' && request.method === 'POST') {
+    return directUploadPair(request, env);
   }
   const confirm = url.pathname.match(/^\/api\/media\/upload-intents\/([^/]+)\/confirm$/);
   if (confirm && request.method === 'POST') return confirmUpload(request, env, decodeURIComponent(confirm[1]));

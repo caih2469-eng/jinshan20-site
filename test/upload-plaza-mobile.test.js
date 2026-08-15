@@ -9,14 +9,12 @@ test('同一张照片的高清图与列表图并行申请并行直传', () => {
   const genericFlow = read('templates/pica-generic-upload-flow.txt');
   const memberFlow = read('templates/pica-member-upload-flow.txt');
 
-  assert.match(runtime, /Promise\.all\(\[\s*requestVariantUploadIntent\(prepared\.display/);
-  assert.match(runtime, /requestVariantUploadIntent\(prepared\.thumb/);
-  assert.match(runtime, /const displayPut = putVariantToR2\(displayIntent/);
-  assert.match(runtime, /const thumbPut = putVariantToR2\(thumbIntent/);
-  assert.match(runtime, /await Promise\.all\(\[displayPut, thumbPut\]\)/);
-  assert.match(runtime, /confirmPreparedImagePair\(/);
-  assert.match(runtime, /api\('\/api\/media\/upload-pairs\/confirm'/);
-  assert.doesNotMatch(runtime, /confirmVariantUpload\(displayIntent, prepared\.display, null/);
+  assert.match(runtime, /const form = new FormData\(\)/);
+  assert.match(runtime, /form\.append\('display', prepared\.display\.file/);
+  assert.match(runtime, /form\.append\('thumb', prepared\.thumb\.file/);
+  assert.match(runtime, /api\('\/api\/media\/upload-pairs\/direct'/);
+  assert.doesNotMatch(runtime, /requestVariantUploadIntent\(/);
+  assert.doesNotMatch(runtime, /confirmPreparedImagePair\(/);
   assert.match(genericFlow, /uploadPreparedImagePair\(prepared/);
   assert.match(memberFlow, /uploadPreparedImagePair\(prepared/);
   assert.doesNotMatch(genericFlow, /uploadCompressedImage\(prepared\.(?:display|thumb)/);

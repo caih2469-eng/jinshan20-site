@@ -141,6 +141,15 @@ test('detail counts combine liked state into the existing aggregate query', () =
   assert.doesNotMatch(plazaRoute, /SELECT 1 AS liked FROM plaza_likes WHERE post_id=\?1 AND user_id=\?2/);
 });
 
+test('a successful plaza like updates the returned quota and the visible counter immediately', () => {
+  assert.match(plazaRoute, /const likeState = async/);
+  assert.match(plazaRoute, /liked: true, \.\.\.await likeState\(env, postId, user\.id\)/);
+  assert.match(plazaRoute, /liked: false, \.\.\.await likeState\(env, postId, user\.id\)/);
+  assert.match(app, /data-like-quota/);
+  assert.match(app, /post\.likeQuota = result\.likeQuota/);
+  assert.match(app, /quota\.textContent = `\$\{post\.likeQuota\.remaining\}\/5`/);
+});
+
 test('plaza performance generators remain idempotent across runtime, templates and converged tests', () => {
   const targets = [
     'public/app.js',
