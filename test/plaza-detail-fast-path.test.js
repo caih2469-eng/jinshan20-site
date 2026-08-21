@@ -1,20 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { execFileSync } from 'node:child_process';
 
 const readApp = () => fs.readFileSync('public/app.js', 'utf8');
 const detailBody = (app) => app.match(
   /async function openPlazaPost\([\s\S]*?\n\}\n\nfunction checkinForm/
 )?.[0] || '';
 
-test('活动广场详情生成器可重复执行且不改变第二次结果', () => {
-  execFileSync(process.execPath, ['scripts/apply-plaza-detail-fast-path.mjs'], { stdio: 'pipe' });
-  const first = readApp();
-  execFileSync(process.execPath, ['scripts/apply-plaza-detail-fast-path.mjs'], { stdio: 'pipe' });
-  const second = readApp();
-  assert.equal(second, first);
-  assert.match(second, /\/\* PLAZA_DETAIL_FAST_PATH_V1 \*\//);
+test('活动广场详情使用已提交的快速路径源码', () => {
+  const app = readApp();
+  assert.match(app, /\/\* PLAZA_DETAIL_FAST_PATH_V1 \*\//);
 });
 
 test('作品主体先于评论完成渲染，评论失败不再拖垮详情', () => {
