@@ -141,6 +141,14 @@ test('detail counts combine liked state into the existing aggregate query', () =
   assert.doesNotMatch(plazaRoute, /SELECT 1 AS liked FROM plaza_likes WHERE post_id=\?1 AND user_id=\?2/);
 });
 
+test('管理员详情从广场服务取得完整评论，学生详情不暴露评论列表', () => {
+  assert.match(plazaRoute, /const isAdmin = user\?\.role === 'admin';/);
+  assert.match(plazaRoute, /const \[members, images, counts, comments\] = await Promise\.all/);
+  assert.match(plazaRoute, /FROM plaza_comments c JOIN users u ON u\.id=c\.user_id/);
+  assert.match(plazaRoute, /\.\.\.\(isAdmin \? \{ comments: comments\.results \} : \{\}\)/);
+  assert.match(plazaRoute, /postDetails\(env, post, user\)/);
+});
+
 test('a successful plaza like updates the returned quota and the visible counter immediately', () => {
   assert.match(plazaRoute, /const likeState = async/);
   assert.match(plazaRoute, /liked: true, \.\.\.await likeState\(env, postId, user\.id\)/);

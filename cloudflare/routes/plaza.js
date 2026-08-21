@@ -24,9 +24,11 @@ const ensureInteractionSchema = (env) => {
   return schemaReady;
 };
 
-const postDetails = async (env, post, userId = null) => {
+const postDetails = async (env, post, user = null) => {
   /* PLAZA_DETAIL_INSTANT_OPEN_V2 */
-  const [members, images, counts] = await Promise.all([
+  const userId = user?.id || null;
+  const isAdmin = user?.role === 'admin';
+  const [members, images, counts, comments] = await Promise.all([
     env.DB.prepare(
     `SELECT u.id,u.name,u.student_id AS studentId,u.campus
        FROM team_members tm JOIN users u ON u.id=tm.user_id
@@ -51,7 +53,16 @@ const postDetails = async (env, post, userId = null) => {
        EXISTS(SELECT 1 FROM plaza_likes WHERE post_id=?1 AND user_id=?2) AS liked,
        (SELECT COUNT(*) FROM plaza_likes
          WHERE user_id=?2 AND date(liked_at,'+8 hours')=?3) AS userLikesToday`
-    ).bind(post.id, userId || '', shanghaiDate()).first()
+    ).bind(post.id, userId || '', shanghaiDate()).first(),
+    isAdmin
+      ? env.DB.prepare(
+        `SELECT c.id,c.content,c.created_at AS createdAt,
+                u.id AS userId,u.name AS userName,u.student_id AS studentId
+           FROM plaza_comments c JOIN users u ON u.id=c.user_id
+          WHERE c.post_id=?1 AND c.status='visible'
+          ORDER BY c.created_at DESC`
+      ).bind(post.id).all()
+      : Promise.resolve({ results: [] })
   ]);
   return {
     ...post,
@@ -67,7 +78,10 @@ const postDetails = async (env, post, userId = null) => {
     viewCount: Number(counts.views),
     commentCount: Number(counts.comments),
     likeQuota: { used: Number(counts.userLikesToday), remaining: Math.max(0, 5 - Number(counts.userLikesToday)) },
-    liked: Boolean(counts.liked)
+    liked: Boolean(counts.liked),
+    // This is deliberately only supplied to a verified administrator. Student
+    // detail rendering remains on its existing paginated comments endpoint.
+    ...(isAdmin ? { comments: comments.results } : {})
   };
 };
 
@@ -258,12 +272,13 @@ export const handlePlazaRoutes = async (request, env, ctx, url, authenticatedUse
   if (detailMatch && request.method === 'GET') {
     const post = await env.DB.prepare(
       `SELECT p.id,p.submission_id AS submissionId,p.team_id AS teamId,t.name AS teamName,
-              task.name AS taskName,p.copy_text AS copy,p.published_at AS publishedAt
+              task.name AS taskName,p.copy_text AS copy,p.published_at AS publishedAt,
+              p.status,p.excluded_from_ranking AS excludedFromRanking
          FROM plaza_posts p JOIN teams t ON t.id=p.team_id
          JOIN task_submissions s ON s.id=p.submission_id JOIN tasks task ON task.id=s.task_id
-        WHERE p.id=?1 AND p.status='visible'`
-    ).bind(decodeURIComponent(detailMatch[1])).first();
-    return post ? json({ post: await postDetails(env, post, user.id) }) : json({ error: '作品不存在' }, 404);
+        WHERE p.id=?1 AND (p.status='visible' OR ?2='admin')`
+    ).bind(decodeURIComponent(detailMatch[1]), user.role).first();
+    return post ? json({ post: await postDetails(env, post, user) }) : json({ error: '作品不存在' }, 404);
   }
 
   const viewMatch = route.match(/^\/api\/plaza\/([^/]+)\/view$/);
@@ -437,10 +452,10 @@ export const handlePlazaRoutes = async (request, env, ctx, url, authenticatedUse
   const adminDeleteComment = route.match(/^\/api\/admin\/comments\/([^/]+)$/);
   if (adminDeleteComment && request.method === 'DELETE') {
     if (user.role !== 'admin') return json({ error: '无管理员权限' }, 403);
-    await env.DB.prepare(
+    const deleted = await env.DB.prepare(
       "UPDATE plaza_comments SET status='deleted',deleted_at=?1 WHERE id=?2 AND status='visible'"
     ).bind(nowIso(), decodeURIComponent(adminDeleteComment[1])).run();
-    return json({ ok: true });
+    return deleted.meta.changes ? json({ ok: true }) : json({ error: '评论不存在或已删除' }, 404);
   }
 
   return null;
