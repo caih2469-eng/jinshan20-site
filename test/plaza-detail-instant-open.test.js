@@ -1,16 +1,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
-import { execFileSync } from 'node:child_process';
 
 const read = (file) => fs.readFileSync(file, 'utf8');
-const runGenerator = (file) => execFileSync(process.execPath, [file], { stdio: 'pipe' });
-
-runGenerator('scripts/apply-plaza-detail-fast-path.mjs');
-runGenerator('scripts/apply-plaza-mobile-layout.mjs');
-runGenerator('scripts/finalize-plaza-performance-quality-v3.mjs');
-runGenerator('scripts/apply-critical-path-p95-v4.mjs');
-runGenerator('scripts/apply-mobile-real-under-1s-v5.mjs');
 
 const app = read('public/app.js');
 const bootstrap = read('public/bootstrap.js');
@@ -158,25 +150,8 @@ test('a successful plaza like updates the returned quota and the visible counter
   assert.match(app, /quota\.textContent = `\$\{post\.likeQuota\.remaining\}\/5`/);
 });
 
-test('plaza performance generators remain idempotent across runtime, templates and converged tests', () => {
-  const targets = [
-    'public/app.js',
-    'public/bootstrap.js',
-    'public/entrance.js',
-    'templates/plaza-mobile-page.txt',
-    'cloudflare/routes/plaza.js',
-    'test/stage-e-ui-cache-navigation.test.js',
-    'test/approved-mobile-experience.test.js'
-  ];
-  const before = new Map(targets.map(target => [target, read(target)]));
-
-  runGenerator('scripts/apply-plaza-detail-fast-path.mjs');
-  runGenerator('scripts/apply-plaza-mobile-layout.mjs');
-  runGenerator('scripts/finalize-plaza-performance-quality-v3.mjs');
-  runGenerator('scripts/apply-critical-path-p95-v4.mjs');
-  runGenerator('scripts/apply-mobile-real-under-1s-v5.mjs');
-
-  for (const target of targets) {
-    assert.equal(read(target), before.get(target), `${target} 在重复生成后发生变化`);
-  }
+test('Plaza validation never runs a historical patch generator', () => {
+  const source = read('test/plaza-detail-instant-open.test.js');
+  assert.equal(source.includes('run' + 'Generator('), false);
+  assert.match(packageJson.scripts.check, /verify-no-auto-patch-chain\.mjs/);
 });
