@@ -264,7 +264,7 @@ jobs:
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          accountId: 8e407a883864331f21147c1a26813fb5
           workingDirectory: cloudflare/pages-sjxy
           command: pages deploy public --project-name sjxy --branch main --commit-hash ${{ github.sha }} --commit-dirty true
       - name: Verify sjxy serves the tested fingerprint
