@@ -242,7 +242,6 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: cloudflare-production
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
