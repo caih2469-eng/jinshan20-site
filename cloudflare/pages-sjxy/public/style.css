@@ -835,6 +835,22 @@ button:active, [role="button"]:active { transform: scale(.97); box-shadow: none;
 .app-dialog-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 22px; }
 .app-dialog-actions > :only-child { grid-column: 1 / -1; }
 .app-dialog-backdrop.closing { opacity: 0; transition: opacity .18s ease; }
+.admin-action-backdrop {
+  display: block;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+.admin-action-backdrop .admin-action-sheet {
+  box-sizing: border-box;
+  width: min(680px, 100%);
+  max-height: none;
+  margin: 0 auto;
+  overflow: visible;
+}
+body[data-view="admin-plaza-detail"] { overflow-y: auto !important; touch-action: pan-y; }
+body[data-view="admin-plaza-detail"] #app { min-height: 100dvh; padding-bottom: calc(32px + env(safe-area-inset-bottom)); }
 
 .admin-user-section { overflow: hidden; }
 .user-list-toolbar { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin: 18px 0 12px; }
@@ -1353,7 +1369,7 @@ body[data-view="plaza"] main {
   top: 0;
   z-index: 30;
   display: grid;
-  grid-template-columns: 40px minmax(0,1fr) 40px;
+  grid-template-columns: 40px minmax(0,1fr) 76px;
   align-items: center;
   width: calc(100% + 10px);
   height: 50px;
@@ -1379,6 +1395,11 @@ body[data-view="plaza"] main {
   box-shadow: none;
 }
 .plaza-icon-button:active { background: #f4f4f5; }
+.plaza-icon-button:disabled { opacity: .5; }
+.plaza-appbar-actions {
+  display: flex;
+  justify-content: flex-end;
+}
 .plaza-icon-button svg,
 .plaza-search-panel svg {
   width: 24px;
@@ -1632,6 +1653,13 @@ body[data-view="plaza"] main {
   color: #34363d;
 }
 .plaza-page-button:disabled { color: #b7b8bd; background: #f7f7f8; }
+
+
+/* Plaza detail is an overlay so returning leaves the existing Plaza DOM and scroll position untouched. */
+.plaza-detail-layer{position:fixed;inset:0;z-index:90;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;background:var(--page-bg,#f7f8fb);padding:18px 20px 32px}
+.plaza-detail-layer .plaza-detail-page{position:static!important;inset:auto!important;transform:none!important;width:min(100%,960px)!important;max-width:960px!important;max-height:none!important;overflow:visible!important;margin:0 auto!important}
+.plaza-detail-layer .plaza-detail-page .row:first-child{position:sticky;top:0;z-index:8;padding:10px 0;background:rgba(255,255,255,.94);backdrop-filter:blur(12px)}
+@media(max-width:720px){.plaza-detail-layer{padding:8px 12px 24px}.plaza-detail-layer .plaza-detail-page{border-radius:20px!important}}
 
 
 /* CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1 */

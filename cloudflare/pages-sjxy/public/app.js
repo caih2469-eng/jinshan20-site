@@ -1,3 +1,4 @@
+/* STUDENT_HOME_CANONICAL_V3 */
 /* PLAZA_UNDER_1S_AND_MEMBER_IMAGE_LIMIT_V1 */
 /* PLAZA_DETAIL_INSTANT_OPEN_V2 */
 /* APPROVED_LAYOUT_TEAM_DRAFT_720_V2 */
@@ -47,6 +48,7 @@ let studentPlazaPrefetchPromise = null;
 const rankingViewCache = new Map();
 const countedPlazaViews = new Set();
 let plazaModalEpoch = 0;
+let lastPlazaListState = null;
 const recordPerf = (type, details = {}) => {
   window.__RECORD_PERF__?.(type, details);
 };
@@ -59,6 +61,8 @@ const metricPath = (value) => {
   }
 };
 const roundedDuration = (startedAt) => Math.round((performance.now() - startedAt) * 10) / 10;
+const isIOSQQWebView = () => /iP(?:hone|ad|od)/.test(navigator.userAgent)
+  && /(?:\bQQ\/|MQQBrowser)/i.test(navigator.userAgent);
 /* APPROVED_REAL_DEVICE_PERF_DIAGNOSTICS_V1 */
 let activePhotoFlow = null;
 const startPhotoFlow = (kind) => { activePhotoFlow = { kind, startedAt: performance.now() }; recordPerf('photo-flow-start', { kind }); };
@@ -182,6 +186,143 @@ const beginNavigation = () => {
   return navigationEpoch;
 };
 const isCurrentNavigation = (epoch) => epoch === navigationEpoch;
+const isAndroidQQWebView = () => /Android/i.test(navigator.userAgent) && /(?:\bQQ\/|MQQBrowser)/i.test(navigator.userAgent);
+const qqBackDiagnosticRequested = () => {
+  const params = new URL(location.href).searchParams;
+  const requested = params.get('qqBackDebug') === '1';
+  const requestedProbe = params.get('qqBackProbe');
+  try {
+    if (requested) {
+      sessionStorage.setItem('qqBackDebug', '1');
+      localStorage.setItem('qqBackDebug', '1');
+      if (requestedProbe) {
+        sessionStorage.setItem('qqBackProbe', requestedProbe);
+        localStorage.setItem('qqBackProbe', requestedProbe);
+      }
+      return true;
+    }
+    return sessionStorage.getItem('qqBackDebug') === '1' || localStorage.getItem('qqBackDebug') === '1';
+  } catch {
+    return requested;
+  }
+};
+const appRouteUrl = (route, postId = '') => {
+  const url = new URL(location.href);
+  if (!isAndroidQQWebView() || !['home', 'plaza', 'plaza-detail'].includes(route)) return url;
+  url.searchParams.delete('plazaPost');
+  url.hash = route === 'plaza-detail' ? `plaza/post/${encodeURIComponent(postId)}` : route;
+  return url;
+};
+try { history.scrollRestoration = 'manual'; } catch {}
+
+const installQQBackDiagnostic = () => {
+  if (!qqBackDiagnosticRequested() || document.querySelector('[data-qq-back-debug]')) return;
+  const storageKey = '__qq_back_debug_v1__';
+  const readEntries = () => {
+    try {
+      const raw = sessionStorage.getItem(storageKey) || localStorage.getItem(storageKey) || '[]';
+      const entries = JSON.parse(raw);
+      return Array.isArray(entries) ? entries.slice(-40) : [];
+    } catch {
+      return [];
+    }
+  };
+  window.__QQ_BACK_DEBUG__ = readEntries();
+  const snapshot = (event, extra = {}) => ({
+    event,
+    time: Date.now(),
+    href: location.href,
+    hash: location.hash,
+    historyLength: history.length,
+    historyState: history.state || null,
+    view: document.body.dataset.view || '',
+    overlay: Boolean(document.querySelector('.plaza-detail-layer')),
+    ...extra
+  });
+  const panel = document.createElement('aside');
+  panel.dataset.qqBackDebug = 'true';
+  panel.setAttribute('aria-live', 'polite');
+  panel.style.cssText = 'position:fixed;right:8px;bottom:8px;z-index:130;max-width:min(300px,calc(100vw - 16px));max-height:42vh;overflow:auto;padding:8px;border:1px solid #4b5563;border-radius:10px;background:rgba(17,24,39,.94);color:#f9fafb;font:11px/1.45 system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.28)';
+  const record = (event, extra = {}) => {
+    const entry = snapshot(event, extra);
+    window.__QQ_BACK_DEBUG__.push(entry);
+    window.__QQ_BACK_DEBUG__ = window.__QQ_BACK_DEBUG__.slice(-40);
+    try {
+      const serialized = JSON.stringify(window.__QQ_BACK_DEBUG__);
+      sessionStorage.setItem(storageKey, serialized);
+      localStorage.setItem(storageKey, serialized);
+    } catch {}
+    render();
+  };
+  const count = (event) => window.__QQ_BACK_DEBUG__.filter((entry) => entry.event === event).length;
+  const escapeText = (value) => String(value || '').replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[character]));
+  const safeState = () => {
+    try { return JSON.stringify(history.state || {}); } catch { return '[unserializable]'; }
+  };
+  const render = () => {
+    const probe = new URL(location.href).searchParams.get('qqBackProbe')
+      || sessionStorage.getItem('qqBackProbe')
+      || localStorage.getItem('qqBackProbe');
+    panel.innerHTML = `<strong>QQ Back 诊断已开启${probe === '2' ? '：QQ真实URL返回测试（当前为第 2 页）' : ''}</strong><br>
+      UA: ${escapeText(navigator.userAgent.slice(0, 110))}<br>
+      history.length: ${history.length} · hash: ${escapeText(location.hash || '(empty)')}<br>
+      state: ${escapeText(safeState().slice(0, 130))}<br>
+      view: ${escapeText(document.body.dataset.view || '(loading)')} · overlay: ${Boolean(document.querySelector('.plaza-detail-layer'))}<br>
+      popstate: ${count('popstate')} · hashchange: ${count('hashchange')} · pagehide: ${count('pagehide')} · visibilitychange: ${count('visibilitychange')}<br>
+      <button type="button" data-qq-back-js style="margin-top:5px">JS测试返回</button>
+      <button type="button" data-qq-back-url style="margin-top:5px">真实URL测试</button>
+      <button type="button" data-qq-back-copy style="margin-top:5px">复制日志</button>
+      <button type="button" data-qq-back-clear style="margin-top:5px">清空日志</button>
+      <button type="button" data-qq-back-exit style="margin-top:5px">退出诊断</button>`;
+    panel.querySelector('[data-qq-back-js]').onclick = () => { record('js-history-back'); history.back(); };
+    panel.querySelector('[data-qq-back-url]').onclick = () => {
+      record('real-url-assign');
+      location.assign('/?qqBackDebug=1&qqBackProbe=2');
+    };
+    panel.querySelector('[data-qq-back-copy]').onclick = async () => {
+      const output = JSON.stringify({ userAgent: navigator.userAgent, entries: window.__QQ_BACK_DEBUG__ }, null, 2);
+      try { await navigator.clipboard.writeText(output); record('copy-log'); } catch { window.prompt('复制以下 QQ Back 诊断日志', output); }
+    };
+    panel.querySelector('[data-qq-back-clear]').onclick = () => {
+      window.__QQ_BACK_DEBUG__ = [];
+      try { sessionStorage.removeItem(storageKey); localStorage.removeItem(storageKey); } catch {}
+      record('log-cleared');
+    };
+    panel.querySelector('[data-qq-back-exit]').onclick = () => {
+      try {
+        sessionStorage.removeItem('qqBackDebug'); localStorage.removeItem('qqBackDebug');
+        sessionStorage.removeItem('qqBackProbe'); localStorage.removeItem('qqBackProbe');
+      } catch {}
+      panel.remove();
+    };
+  };
+  window.addEventListener('popstate', (event) => record('popstate', { eventState: event.state || null }));
+  window.addEventListener('hashchange', () => record('hashchange'));
+  window.addEventListener('beforeunload', () => record('beforeunload'));
+  window.addEventListener('pagehide', () => record('pagehide'));
+  document.addEventListener('visibilitychange', () => record('visibilitychange', { visibility: document.visibilityState }));
+  record('diagnostic-ready');
+};
+installQQBackDiagnostic();
+const recordAppRoute = (route, details = {}, options = {}) => {
+  if (!history?.pushState) return;
+  const nextState = { ...(history.state || {}), appRoute: route, ...details };
+  const url = options.url || appRouteUrl(route, details.plazaPost);
+  if (options.replace || history.state?.appRoute === route) {
+    history.replaceState(nextState, '', url);
+  } else {
+    history.pushState(nextState, '', url);
+  }
+};
+const returnToPreviousAppRoute = () => {
+  if (history.state?.appRoute && history.length > 1) {
+    history.back();
+    return;
+  }
+  void home({ historyMode: 'replace' });
+};
 
 window.addEventListener('scroll', () => {
   if (document.body.dataset.view !== 'admin') return;
@@ -201,6 +342,19 @@ const lazyImageObserver = 'IntersectionObserver' in window
       observer.unobserve(image);
     });
   }, { rootMargin: '240px 0px' })
+  : null;
+const plazaDetailImageObserver = 'IntersectionObserver' in window
+  ? new IntersectionObserver((entries, observer) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      const image = entry.target;
+      if (image.dataset.src) {
+        image.src = buildMediaUrl(image.dataset.src);
+        image.removeAttribute('data-src');
+      }
+      observer.unobserve(image);
+    });
+  }, { rootMargin: isIOSQQWebView() ? '1200px 0px' : '720px 0px' })
   : null;
 
 const preparePerfImage = (image) => {
@@ -230,11 +384,14 @@ const prepareDynamicContent = (container = app) => {
     image.decoding = 'async';
     image.fetchPriority = image.dataset.priority === 'high' ? 'high' : 'low';
     if (image.dataset.src) {
-      if (image.dataset.priority === 'high' || !lazyImageObserver) {
+      const imageObserver = image.dataset.plazaDetailImage === 'true'
+        ? plazaDetailImageObserver
+        : lazyImageObserver;
+      if (image.dataset.priority === 'high' || !imageObserver) {
         image.src = buildMediaUrl(image.dataset.src);
         image.removeAttribute('data-src');
       } else {
-        lazyImageObserver.observe(image);
+        imageObserver.observe(image);
       }
     }
   });
@@ -242,6 +399,15 @@ const prepareDynamicContent = (container = app) => {
 
 let activeImageViewer = null;
 let imageViewerCloseTimer = null;
+let activePlazaDetailLayer = null;
+let restoreAppRoute = () => false;
+const closePlazaDetailLayer = () => {
+  if (!activePlazaDetailLayer) return false;
+  activePlazaDetailLayer.remove();
+  activePlazaDetailLayer = null;
+  document.body.dataset.view = 'plaza';
+  return true;
+};
 const closeImageViewer = (fromHistory = false) => {
   if (!activeImageViewer) return;
   activeImageViewer.remove();
@@ -249,8 +415,26 @@ const closeImageViewer = (fromHistory = false) => {
   clearTimeout(imageViewerCloseTimer);
   if (!fromHistory && history.state?.imageViewer) history.back();
 };
-window.addEventListener('popstate', () => {
-  if (activeImageViewer) closeImageViewer(true);
+let lastHistoryRestoreKey = '';
+const restoreHistoryNavigation = (state) => {
+  const restoreKey = `${location.href}|${state?.appRoute || ''}|${state?.plazaPost || ''}|${state?.imageViewer ? 'image' : ''}`;
+  if (restoreKey === lastHistoryRestoreKey) return;
+  lastHistoryRestoreKey = restoreKey;
+  if (activeImageViewer) {
+    closeImageViewer(true);
+    return;
+  }
+  if (restoreAppRoute(state)) return;
+  if (document.body.dataset.view === 'plaza-detail' && lastPlazaListState) {
+    restorePlazaListFromHistory(lastPlazaListState);
+  }
+};
+window.addEventListener('popstate', (event) => {
+  restoreHistoryNavigation(event.state);
+});
+window.addEventListener('hashchange', () => {
+  if (!isAndroidQQWebView()) return;
+  queueMicrotask(() => restoreHistoryNavigation(history.state));
 });
 
 const saveOriginalImage = async (url, alt = '活动原图') => {
@@ -653,7 +837,8 @@ const escapeHtml = (value) =>
     "'": '&#39;'
   })[character]);
 
-const MEDIA_MAX_SOURCE_BYTES = 5 * 1024 * 1024;
+const MEDIA_MAX_SOURCE_BYTES = 30 * 1024 * 1024;
+const MEDIA_MAX_FINAL_BYTES = 5 * 1024 * 1024;
 /* MOBILE_ADMIN_PHOTO_FIX_V1 */
 const MEDIA_THUMB_MAX_EDGE = 720;
 const MEDIA_PLAZA_THUMB_MAX_EDGE = 640;
@@ -689,7 +874,7 @@ const bytesMatchMime = (bytes, type) => detectImageMime(bytes) === type;
 
 const normalizeSourceImage = async (file) => {
   if (file.size > MEDIA_MAX_SOURCE_BYTES) {
-    throw new Error('单张图片不能超过5MB，请压缩或重新选择图片。');
+    throw new Error('原图单张不能超过30MB，请先在相册中裁剪后重试。');
   }
 
   const header = new Uint8Array(await file.slice(0, 16).arrayBuffer());
@@ -812,8 +997,8 @@ const encodePipelineCanvas = async (pica, canvas, profile) => {
   if (blob.size > profile.maxBytes) {
     blob = await pica.toBlob(canvas, mimeType, profile.fallbackQuality);
   }
-  if (!blob?.size || blob.size > 1.5 * 1024 * 1024) {
-    throw new Error('图片处理后仍然过大，请在相册中裁剪后重新上传。');
+  if (!blob?.size || blob.size > MEDIA_MAX_FINAL_BYTES) {
+    throw new Error('图片自动压缩后仍超过5MB，请先在相册中裁剪后重试。');
   }
   const extension = mimeType === 'image/webp' ? 'webp' : 'jpg';
   const file = new File([blob], `${profile.baseName}-${profile.suffix}.${extension}`, {
@@ -855,37 +1040,41 @@ const prepareImageVariants = async (file, options = {}) => {
     options.onProgress?.(65);
 
     const baseName = sourceFile.name.replace(/\.[^.]+$/, '') || 'image';
-    let displayCanvas = masterCanvas;
-    let display = await encodePipelineCanvas(pica, displayCanvas, {
-      baseName,
-      suffix: 'display',
-      quality: screenshotLike ? 0.94 : 0.90,
-      fallbackQuality: screenshotLike ? 0.90 : 0.86,
-      maxBytes: PICA_DISPLAY_MAX_BYTES
-    });
-
-    if (display.file.size > PICA_DISPLAY_MAX_BYTES
-        && Math.max(masterCanvas.width, masterCanvas.height) > 1600) {
-      const scale = 1600 / Math.max(masterCanvas.width, masterCanvas.height);
-      smallerDisplayCanvas = createPipelineCanvas(masterCanvas.width * scale, masterCanvas.height * scale);
-      await pica.resize(masterCanvas, smallerDisplayCanvas, { filter: 'mks2013' });
-      displayCanvas = smallerDisplayCanvas;
-      display = await encodePipelineCanvas(pica, displayCanvas, {
+    const encodeDisplay = async () => {
+      let displayCanvas = masterCanvas;
+      let display = await encodePipelineCanvas(pica, displayCanvas, {
         baseName,
         suffix: 'display',
-        quality: screenshotLike ? 0.91 : 0.87,
-        fallbackQuality: screenshotLike ? 0.88 : 0.84,
+        quality: screenshotLike ? 0.94 : 0.90,
+        fallbackQuality: screenshotLike ? 0.90 : 0.86,
         maxBytes: PICA_DISPLAY_MAX_BYTES
       });
-    }
-
-    const thumb = await encodePipelineCanvas(pica, thumbCanvas, {
-      baseName,
-      suffix: 'thumb',
-      quality: screenshotLike ? 0.92 : 0.88,
-      fallbackQuality: screenshotLike ? 0.89 : 0.84,
-      maxBytes: PICA_THUMB_MAX_BYTES
-    });
+      if (display.file.size > PICA_DISPLAY_MAX_BYTES
+          && Math.max(masterCanvas.width, masterCanvas.height) > 1600) {
+        const scale = 1600 / Math.max(masterCanvas.width, masterCanvas.height);
+        smallerDisplayCanvas = createPipelineCanvas(masterCanvas.width * scale, masterCanvas.height * scale);
+        await pica.resize(masterCanvas, smallerDisplayCanvas, { filter: 'mks2013' });
+        displayCanvas = smallerDisplayCanvas;
+        display = await encodePipelineCanvas(pica, displayCanvas, {
+          baseName,
+          suffix: 'display',
+          quality: screenshotLike ? 0.91 : 0.87,
+          fallbackQuality: screenshotLike ? 0.88 : 0.84,
+          maxBytes: PICA_DISPLAY_MAX_BYTES
+        });
+      }
+      return display;
+    };
+    const [display, thumb] = await Promise.all([
+      encodeDisplay(),
+      encodePipelineCanvas(pica, thumbCanvas, {
+        baseName,
+        suffix: 'thumb',
+        quality: screenshotLike ? 0.92 : 0.88,
+        fallbackQuality: screenshotLike ? 0.89 : 0.84,
+        maxBytes: PICA_THUMB_MAX_BYTES
+      })
+    ]);
     const previewUrl = URL.createObjectURL(display.file);
     mediaPreviewUrls.add(previewUrl);
     display.previewUrl = previewUrl;
@@ -915,58 +1104,57 @@ const prepareImageVariantsMeasured = async (file, options = {}) => {
   }
 };
 
-const requestVariantUploadIntent = (image, context, variant, signal) => api('/api/media/upload-intents', {
-  method: 'POST',
-  signal,
-  body: JSON.stringify({
-    taskId: context.taskId || null,
-    businessType: context.businessType,
-    mimeType: image.mimeType,
-    fileSize: image.file.size,
-    width: image.width,
-    height: image.height,
-    variant
-  })
-});
-
-const putVariantToR2 = async (intent, image, signal) => {
-  const response = await uploadBinary(intent.uploadUrl, {
-    method: 'PUT',
-    headers: intent.headers,
-    body: image.file,
-    signal
+const uploadPreparedImagePairViaSignedPut = async (prepared, context, signal) => {
+  const uploadPart = async (image, variant) => {
+    const intent = await api('/api/media/upload-intents', {
+      method: 'POST', signal,
+      body: JSON.stringify({
+        taskId: context.taskId || null,
+        businessType: context.businessType,
+        mimeType: image.mimeType,
+        fileSize: image.file.size,
+        width: image.width,
+        height: image.height,
+        variant
+      })
+    });
+    const uploaded = await uploadBinary(intent.uploadUrl, {
+      method: 'PUT', headers: intent.headers, body: image.file, signal
+    });
+    if (!uploaded.ok) throw new Error(`图片直传失败（${uploaded.status}），请重新选择图片。`);
+    return intent.intentId;
+  };
+  context.onStage?.('正在通过兼容线路上传图片…');
+  const displayIntentId = await uploadPart(prepared.display, 'display');
+  const thumbIntentId = await uploadPart(prepared.thumb, 'thumb');
+  return api('/api/media/upload-pairs/confirm', {
+    method: 'POST', signal,
+    body: JSON.stringify({ displayIntentId, thumbIntentId })
   });
-  if (!response.ok) throw new Error(`图片直传失败（${response.status}），请重新选择图片。`);
-};
-
-const confirmVariantUpload = async (intent, image, parentMediaId, signal) => {
-  const confirmed = await api(`/api/media/upload-intents/${encodeURIComponent(intent.intentId)}/confirm`, {
-    method: 'POST',
-    signal,
-    body: JSON.stringify({ parentMediaId: parentMediaId || null })
-  });
-  return { ...image, mediaId: confirmed.media.id };
 };
 
 const uploadPreparedImagePair = async (prepared, context, signal) => {
   const startedAt = performance.now();
-  context.onStage?.('正在同时申请高清图和列表图上传地址…');
-  const [displayIntent, thumbIntent] = await Promise.all([
-    requestVariantUploadIntent(prepared.display, context, 'display', signal),
-    requestVariantUploadIntent(prepared.thumb, context, 'thumb', signal)
-  ]);
-
-  context.onStage?.('正在并行上传高清图和列表图…');
-  const displayPut = putVariantToR2(displayIntent, prepared.display, signal);
-  const thumbPut = putVariantToR2(thumbIntent, prepared.thumb, signal);
-
-  await displayPut;
-  context.onStage?.('正在确认高清图…');
-  const display = await confirmVariantUpload(displayIntent, prepared.display, null, signal);
-
-  await thumbPut;
-  context.onStage?.('正在确认列表图…');
-  const thumb = await confirmVariantUpload(thumbIntent, prepared.thumb, display.mediaId, signal);
+  let confirmed;
+  if (isIOSQQWebView()) {
+    confirmed = await uploadPreparedImagePairViaSignedPut(prepared, context, signal);
+  } else {
+    context.onStage?.('正在通过极速线路上传高清图和列表图…');
+    const form = new FormData();
+    form.append('taskId', context.taskId || '');
+    form.append('businessType', context.businessType);
+    form.append('displayWidth', String(prepared.display.width));
+    form.append('displayHeight', String(prepared.display.height));
+    form.append('thumbWidth', String(prepared.thumb.width));
+    form.append('thumbHeight', String(prepared.thumb.height));
+    form.append('display', prepared.display.file, prepared.display.file.name);
+    form.append('thumb', prepared.thumb.file, prepared.thumb.file.name);
+    confirmed = await api('/api/media/upload-pairs/direct', {
+      method: 'POST', signal, body: form, timeoutMs: 45_000
+    });
+  }
+  const display = { ...prepared.display, mediaId: confirmed.display.id };
+  const thumb = { ...prepared.thumb, mediaId: confirmed.thumb.id };
 
   recordPerf('upload-pair', {
     displayBytes: Number(prepared.display?.file?.size || 0),
@@ -1228,13 +1416,15 @@ const uploadConcurrency = () => {
 const createMediaUploadSession = (files, context = {}, ui = {}) => {
   const previewStartedAt = performance.now();
   const selected = [...files];
+  const limit = Math.max(1, Number(context.limit || selected.length) || 1);
   if (!selected.length) throw new Error('请选择图片。');
-  if (selected.length > Number(context.limit || selected.length)) throw new Error(`最多上传${context.limit}张图片。`);
-  selected.forEach((file, index) => {
+  if (selected.length > limit) throw new Error(`最多上传${limit}张图片。`);
+  const validateSourceFiles = (incoming, offset = 0) => incoming.forEach((file, index) => {
     if (file.size > MEDIA_MAX_SOURCE_BYTES) {
-      throw new Error(`第 ${index + 1} 张图片超过5MB，请压缩或重新选择。`);
+      throw new Error(`第 ${offset + index + 1} 张原图超过30MB，请先在相册中裁剪后重试。`);
     }
   });
+  validateSourceFiles(selected);
   const controller = new AbortController();
   const rawPreviewUrls = ui.previewContainer ? selected.map((file) => {
     const previewUrl = URL.createObjectURL(file);
@@ -1261,6 +1451,7 @@ const createMediaUploadSession = (files, context = {}, ui = {}) => {
     errors: new Map(),
     promise: null,
     released: false,
+    append: null,
     retryFailed: null,
     release: null
   };
@@ -1294,7 +1485,7 @@ const createMediaUploadSession = (files, context = {}, ui = {}) => {
     }
   };
 
-  const runIndexes = async (indexes) => {
+  const processIndexes = async (indexes) => {
     setStatus('正在读取图片…');
     let cursor = 0;
     const worker = async () => {
@@ -1310,19 +1501,58 @@ const createMediaUploadSession = (files, context = {}, ui = {}) => {
     await Promise.all(workers);
     if (controller.signal.aborted) throw new Error('图片上传已取消，请重新选择图片。');
     if (session.errors.size) {
-      const failed = [...session.errors.keys()].map((index) => index + 1).join('、');
-      throw new Error(`第 ${failed} 张图片处理失败，可单独重试失败图片。`);
+      const details = [...session.errors.entries()].map(([index, error]) => (
+        `第 ${index + 1} 张：${error?.message || '图片处理失败'}`
+      ));
+      throw new Error(`${details.join('；')}。可单独重试失败图片。`);
     }
     setStatus('图片已就绪');
     return session.results;
+  };
+
+  const enqueueIndexes = (indexes) => {
+    const previous = session.promise;
+    const queued = (async () => {
+      if (previous) await previous.catch(() => null);
+      return processIndexes(indexes);
+    })();
+    session.promise = queued;
+    return queued;
+  };
+
+  session.append = (filesToAppend) => {
+    if (session.released) throw new Error('图片上传会话已结束，请重新进入队伍提交。');
+    const incoming = [...filesToAppend];
+    if (!incoming.length) return session.promise;
+    if (selected.length + incoming.length > limit) {
+      throw new Error(`已选择 ${selected.length} 张，最多上传 ${limit} 张图片。`);
+    }
+    validateSourceFiles(incoming, selected.length);
+    const firstNewIndex = selected.length;
+    selected.push(...incoming);
+    session.results.length = selected.length;
+    session.partial.length = selected.length;
+    if (ui.previewContainer) {
+      incoming.forEach((file) => {
+        const previewUrl = URL.createObjectURL(file);
+        mediaPreviewUrls.add(previewUrl);
+        rawPreviewUrls.push(previewUrl);
+      });
+      renderPreviews(ui.previewContainer, rawPreviewUrls.map((previewUrl) => ({ previewUrl })));
+      recordPerf('preview', {
+        imageCount: selected.length,
+        duration: roundedDuration(previewStartedAt),
+        navigationEpoch
+      });
+    }
+    return enqueueIndexes(incoming.map((_, index) => firstNewIndex + index));
   };
 
   session.retryFailed = () => {
     if (!session.errors.size || session.released) return session.promise;
     const indexes = [...session.errors.keys()];
     session.errors.clear();
-    session.promise = runIndexes(indexes);
-    return session.promise;
+    return enqueueIndexes(indexes);
   };
   session.release = () => {
     if (session.released) return;
@@ -1334,7 +1564,7 @@ const createMediaUploadSession = (files, context = {}, ui = {}) => {
     });
     mediaUploadSessions.delete(session);
   };
-  session.promise = runIndexes(selected.map((_, index) => index));
+  session.promise = enqueueIndexes(selected.map((_, index) => index));
   return session;
 };
 
@@ -1461,6 +1691,7 @@ const returnToCachedStudentHome = (successMessage, options = {}) => {
     return;
   }
   studentViewState.refreshError = null;
+  recordAppRoute('home', {}, { replace: true });
   studentViewState.scrollY = Math.max(0, Number(options.scrollY || 0));
   const pageEpoch = beginNavigation();
   void student(studentViewState.data, pageEpoch, { restoreScroll: true });
@@ -1511,6 +1742,9 @@ async function home(options = {}) {
   const forceRefresh = Boolean(options.forceRefresh);
   const restoreScroll = options.restoreScroll !== false;
   if (user?.role === 'student') {
+    if (options.historyMode !== 'restore') {
+      recordAppRoute('home', { studentHome: true, plazaList: false, plazaDetail: false }, { replace: options.historyMode === 'replace' || !history.state?.appRoute });
+    }
     if (forceRefresh) studentViewState.dirty = true;
     if (studentViewState.userId && studentViewState.userId !== user.id) {
       studentViewState.userId = null;
@@ -1568,11 +1802,9 @@ async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
     else memberUploadWarmup();
   }, 1100);
   const isInteraction = user.trackId === 'interaction';
-  const teamListResult = dashboard.teamSummary;
   const myTeam = dashboard.teamSummary?.team;
   const taskResult = { tasks: dashboard.tasks };
   const checkinStats = dashboard.checkinStats || { personalDays: 0, teamDays: 0 };
-  const materialResult = { tasks: dashboard.materialTasks };
   const completedTasks = taskResult.tasks.filter((task) =>
     ['submitted', 'approved'].includes(task.submission?.status) || task.memberCheckin
   ).length;
@@ -1600,34 +1832,10 @@ async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
       <button id="inbox"><span>✉</span><strong>信息箱</strong><small>通知评论</small></button>
       <button id="teamCheckinStats"><span>◇</span><strong>队伍累计</strong><small>${dashboard.teamSummary?.team ? `${Number(checkinStats.teamDays || 0)}天 · 查看` : '未加入'}</small></button>
     </nav>
-    <div class="student-top-actions">
-      <button class="secondary" id="ranking">查看排行榜</button>
-    </div>
-    <section class="card profile-card">
-      <h2>我的资料</h2>
-      <details class="profile-details">
-      <summary>查看完整身份资料</summary>
-      <div class="profile-grid">
-        <div><span>姓名</span><strong>${escapeHtml(user.name)}</strong></div>
-        <div><span>学号</span><strong>${escapeHtml(user.studentId)}</strong></div>
-        <div><span>校区</span><strong>${escapeHtml(user.campus)}</strong></div>
-        <div><span>所属赛道</span><strong>${escapeHtml(trackName(user.trackId))}</strong></div>
-        <div><span>账号状态</span><strong>${escapeHtml(statusLabel(user.status))}</strong></div>
-        <div><span>创建时间</span><strong>${escapeHtml(formatDate(user.createdAt))}</strong></div>
-      </div>
-      <p class="muted">关键身份资料仅可由管理员维护，如有错误请联系活动工作人员。</p>
-      </details>
-    </section>
     ${isInteraction ? `
       <section class="card" id="myTeam">
-        <div class="row"><h2>我的队伍</h2><span class="right muted">${teamListResult.teamCount}/${teamListResult.maxTeams} 个队伍</span></div>
+        <h2>队伍成员</h2>
         ${myTeam ? `
-          <div class="team-summary">
-            <div><span>队伍名称</span><strong>${escapeHtml(myTeam.name)}</strong></div>
-            <div><span>邀请码</span><strong class="invite-code">${escapeHtml(myTeam.inviteCode)}</strong></div>
-            <div><span>成员人数</span><strong>${myTeam.memberCount}/${myTeam.memberLimit}</strong></div>
-          </div>
-          <h3>队伍成员</h3>
           <div class="member-list">${myTeam.members.map((member) => `<span>${escapeHtml(member.name)}（${escapeHtml(member.campus)}）</span>`).join('')}</div>
         ` : `
           <p class="muted">你尚未被编入队伍。队伍由管理员统一导入和调整，请联系活动管理员。</p>`}
@@ -1650,7 +1858,7 @@ async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
           <div class="member-list compact">${(task.teamProgress?.members || []).map((member) => `<span class="${member.checked ? 'checked-member' : ''}">${escapeHtml(member.name)} · ${escapeHtml(member.studentId)} ${member.checked ? '✓ 已打卡' : '未打卡'}</span>`).join('')}</div>
         </div>
         <button data-member-task="${task.id}" ${task.availabilityError ? 'disabled' : ''}>${task.memberCheckin ? '更新个人打卡' : '个人打卡'}</button>
-        ${task.isCaptain ? `<button class="secondary" data-task="${task.id}" ${task.availabilityError || Number(task.teamProgress?.total || 0) === 0 || Number(task.teamProgress?.completed || 0) < Number(task.teamProgress?.total || 0) || ['submitted','approved'].includes(task.submission?.status) ? 'disabled' : ''}>${task.submission ? '继续编辑队伍作品' : '队长汇总提交'}</button>${Number(task.teamProgress?.total || 0) > 0 && Number(task.teamProgress?.completed || 0) < Number(task.teamProgress?.total || 0) ? '<p class="bad">所有队员完成当天个人打卡后，队长才能汇总提交。</p>' : ''}` : '<p class="muted">队伍作品由管理员指定的队长汇总提交。</p>'}
+        ${task.isCaptain ? `<button class="secondary" data-task="${task.id}" ${task.availabilityError || Number(task.teamProgress?.total || 0) === 0 || Number(task.teamProgress?.completed || 0) < Number(task.teamProgress?.total || 0) || task.submission?.status === 'approved' ? 'disabled' : ''}>${task.submission ? '继续编辑队伍作品' : '队长汇总提交'}</button>${Number(task.teamProgress?.total || 0) > 0 && Number(task.teamProgress?.completed || 0) < Number(task.teamProgress?.total || 0) ? '<p class="bad">所有队员完成当天个人打卡后，队长才能汇总提交。</p>' : ''}` : '<p class="muted">队伍作品由管理员指定的队长汇总提交。</p>'}
       ` : `<button data-task="${task.id}" ${task.availabilityError || ['submitted','approved'].includes(task.submission?.status) ? 'disabled' : ''}>${task.submission ? '继续编辑' : '个人打卡'}</button>`}
       ${task.availabilityError ? `<p class="bad">${escapeHtml(task.availabilityError)}</p>` : ''}
     </article>`).join('');
@@ -1659,15 +1867,6 @@ async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
       <div class="grid">${taskCards || '<p class="muted">当前没有已发布任务</p>'}</div>
     </section>
     `);
-  const materialStatus = { submitted: '已提交', returned: '退回修改' };
-  app.insertAdjacentHTML('beforeend', `<section class="card"><div class="row"><h2>最终截图证明</h2><span class="right muted">最多 8 张 · 压缩后单张不超过 5MB</span></div>
-    <div class="grid">${materialResult.tasks.map((task) => `<article class="slot">
-      <div class="row"><h2>${escapeHtml(task.title)}</h2><span class="pill ${task.submission?.status === 'submitted' ? 'done' : 'pending'}">${materialStatus[task.submission?.status] || '未提交'}</span></div>
-      <p>${escapeHtml(task.description)}</p><p class="muted">截止：${formatDate(task.deadline)} · 个人提交 · ${task.fileTypes.map((type) => `.${escapeHtml(type)}`).join('、')} · 最多 ${task.fileLimit} 张</p>
-      ${task.submission?.reviewNote ? `<p class="bad">退回原因：${escapeHtml(task.submission.reviewNote)}</p>` : ''}
-      ${task.submission?.files?.length ? `<div>${task.submission.files.map((file) => `<button class="secondary material-download" data-url="${file.downloadUrl}" data-name="${escapeHtml(file.originalName)}">${escapeHtml(file.originalName)}</button>`).join(' ')}</div>` : ''}
-      <button data-material="${task.id}" ${task.submission?.status === 'submitted' ? 'disabled' : ''}>${task.submission?.status === 'returned' ? '修改并重新提交' : '提交材料'}</button>
-    </article>`).join('') || '<p class="muted">暂无材料任务</p>'}</div></section>`);
   prepareDynamicContent(app);
   recordPerf('page-render', {
     page: 'student-home',
@@ -1676,7 +1875,6 @@ async function student(dashboard, pageEpoch = beginNavigation(), options = {}) {
   });
   document.querySelector('#out').onclick = logout;
   document.querySelector('#historyCheckins').onclick = () => { startPhotoFlow('history'); openStudentCheckinHistory(); };
-  document.querySelector('#ranking').onclick = () => rankings();
   document.querySelector('#plaza').onclick = () => { startPhotoFlow('plaza'); plaza(); };
   document.querySelector('#inbox').onclick = () => inbox();
   document.querySelector('#teamCheckinStats').onclick = () => void openTeamCheckinHistory();
@@ -1878,7 +2076,9 @@ function openTeamCheckinHistory() {
 }
 
 function memberCheckinForm(task) {
+  const options = arguments[1] || {};
   beginNavigation();
+  if (options.historyMode !== 'restore') recordAppRoute('member-checkin', { taskId: task.id });
   void loadImageCompressionLibrary().catch(() => {});
   const maxImages = Math.max(1, Math.min(8,
     Number(task.memberImageLimit || task.imageLimit) || 1));
@@ -1888,7 +2088,7 @@ function memberCheckinForm(task) {
       <label>姓名</label><input value="${escapeHtml(user.name)}" readonly>
       <label>学号</label><input value="${escapeHtml(user.studentId)}" readonly>
       <label>校区</label><input value="${escapeHtml(user.campus)}" readonly>
-      <label>图片（最多 ${maxImages} 张）</label><input name="images" type="file" accept="image/jpeg,image/png,image/webp" multiple required>
+      <label>图片（最多 ${maxImages} 张）</label><input name="images" type="file" accept="image/jpeg,image/png,image/webp" multiple>
       <div class="image-preview" id="memberPreview"></div>
       <p class="muted" id="memberUploadStatus">可选择 1–${maxImages} 张图片，选择后会立即预览并上传。</p>
       <button type="button" class="secondary" id="retryMemberUpload" hidden>重试失败图片</button>
@@ -1972,29 +2172,35 @@ function memberCheckinForm(task) {
   };
 
   const runIndexes = (current, indexes) => {
-    let cursor = 0;
-    const worker = async () => {
-      while (cursor < indexes.length && current === session && !current.controller.signal.aborted) {
-        const index = indexes[cursor++];
-        await processItem(current, current.items[index], index);
-      }
+    const previous = current.processingPromise;
+    const processIndexes = async () => {
+      if (previous) await previous.catch(() => null);
+      let cursor = 0;
+      const worker = async () => {
+        while (cursor < indexes.length && current === session && !current.controller.signal.aborted) {
+          const index = indexes[cursor++];
+          await processItem(current, current.items[index], index);
+        }
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(uploadConcurrency(), indexes.length) }, () => worker())
+      );
     };
-    current.processingPromise = Promise.all(
-      Array.from({ length: Math.min(uploadConcurrency(), indexes.length) }, () => worker())
-    ).finally(() => {
-      if (current === session) {
+    const processingPromise = processIndexes().finally(() => {
+      if (current === session && current.processingPromise === processingPromise) {
         current.processingPromise = null;
         form._media = current.items.filter((item) => item.mediaId).map((item) => ({ mediaId: item.mediaId }));
         updateStatus();
       }
     });
+    current.processingPromise = processingPromise;
     updateReadyState();
-    return current.processingPromise;
+    return processingPromise;
   };
 
   document.querySelector('#backMember').onclick = () => {
     releaseSession();
-    home();
+    returnToPreviousAppRoute();
   };
 
   retryButton.onclick = () => {
@@ -2007,27 +2213,33 @@ function memberCheckinForm(task) {
 
   form.images.onchange = () => {
     const files = [...(form.images.files || [])];
-    releaseSession();
-    preview.innerHTML = '';
-    retryButton.hidden = true;
     if (!files.length) {
-      status.textContent = '请选择图片。';
+      if (!session) status.textContent = '请选择图片。';
       updateReadyState();
       return;
     }
-    if (files.length > maxImages) {
+    const existingCount = session?.items?.length || 0;
+    if (existingCount + files.length > maxImages) {
       form.images.value = '';
-      status.textContent = `当前任务最多上传 ${maxImages} 张图片。`;
+      status.textContent = existingCount
+        ? `已选择 ${existingCount} 张，还可选择 ${maxImages - existingCount} 张。`
+        : `当前任务最多上传 ${maxImages} 张图片。`;
       void openDialog({
         title: '图片数量超过限制',
-        message: `管理员设置当前任务最多上传 ${maxImages} 张图片，请重新选择。`,
+        message: existingCount
+          ? `管理员设置当前任务最多上传 ${maxImages} 张图片；已保留前 ${existingCount} 张，请继续选择不超过 ${maxImages - existingCount} 张。`
+          : `管理员设置当前任务最多上传 ${maxImages} 张图片，请重新选择。`,
         confirmText: '重新选择'
       });
       return;
     }
-    const current = {
+    const current = session || {
       controller: new AbortController(),
-      items: files.map((file) => {
+      items: [],
+      processingPromise: null
+    };
+    const firstNewIndex = current.items.length;
+    current.items.push(...files.map((file) => {
         const previewUrl = URL.createObjectURL(file);
         mediaPreviewUrls.add(previewUrl);
         return {
@@ -2039,13 +2251,13 @@ function memberCheckinForm(task) {
           uploadPromise: null,
           error: null
         };
-      }),
-      processingPromise: null
-    };
+      }));
     session = current;
+    form.images.value = '';
+    retryButton.hidden = true;
     renderPreviews(preview, current.items.map((item) => ({ previewUrl: item.previewUrl })));
     status.textContent = `正在处理 ${current.items.length} 张图片…`;
-    void runIndexes(current, current.items.map((_, index) => index));
+    void runIndexes(current, files.map((_, index) => firstNewIndex + index));
   };
 
   form.onsubmit = async (event) => {
@@ -2105,7 +2317,9 @@ function memberCheckinForm(task) {
 }
 
 function materialSubmissionForm(task) {
+  const options = arguments[1] || {};
   beginNavigation();
+  if (options.historyMode !== 'restore') recordAppRoute('material-submission', { taskId: task.id });
   void loadImageCompressionLibrary().catch(() => {});
   const current = task.submission;
   app.innerHTML = `<header class="hero"><h1>${escapeHtml(task.title)}</h1><p>${escapeHtml(task.description)}</p></header>
@@ -2124,7 +2338,7 @@ function materialSubmissionForm(task) {
   let mediaSession = null;
   document.querySelector('#backMaterial').onclick = () => {
     mediaSession?.release();
-    home();
+    returnToPreviousAppRoute();
   };
   materialRetry.onclick = () => {
     if (!mediaSession?.errors.size) return;
@@ -2207,13 +2421,15 @@ function materialSubmissionForm(task) {
 }
 
 function taskSubmissionForm(task) {
+  const options = arguments[1] || {};
   beginNavigation();
+  if (options.historyMode !== 'restore') recordAppRoute('task-submission', { taskId: task.id });
   void loadImageCompressionLibrary().catch(() => {});
   const current = task.submission;
   app.innerHTML = `
     <header class="hero"><h1>${escapeHtml(task.name)}</h1><p>${escapeHtml(task.description)}</p></header>
     <section class="card"><form id="taskSend">
-      <div class="notice">上传前浏览器会自动压缩图片。支持 JPG、PNG、WebP，原图单张不超过 5MB，最多 ${task.imageLimit} 张。</div>
+      <div class="notice">上传前浏览器会自动压缩图片。支持 JPG、PNG、WebP，原图单张不超过 30MB，压缩后单张不超过 5MB，最多 ${task.imageLimit} 张。</div>
       <label>活动图片</label><input name="images" type="file" accept="image/jpeg,image/png,image/webp" multiple>
       <div class="image-preview" id="taskPreview">${(current?.images || []).map((image) => {
         const thumbUrl = image.thumbUrl || image.imageUrl || image.displayUrl || '';
@@ -2234,7 +2450,7 @@ function taskSubmissionForm(task) {
   let mediaSession = null;
   document.querySelector('#back').onclick = () => {
     mediaSession?.release();
-    home();
+    returnToPreviousAppRoute();
   };
   taskRetry.onclick = () => {
     if (!mediaSession?.errors.size) return;
@@ -2245,19 +2461,24 @@ function taskSubmissionForm(task) {
     });
   };
   form.images.onchange = () => {
-    mediaSession?.release();
-    mediaSession = null;
-    taskRetry.hidden = true;
+    const files = [...(form.images.files || [])];
+    if (!files.length) return;
     try {
-      if (form.images.files.length > task.imageLimit) throw new Error(`最多上传 ${task.imageLimit} 张图片`);
-      mediaSession = createMediaUploadSession(form.images.files, {
-        taskId: task.id, businessType: 'task', limit: task.imageLimit
-      }, {
-        previewContainer: document.querySelector('#taskPreview'),
-        statusElement: taskStatus
-      });
+      const activePromise = mediaSession
+        ? mediaSession.append(files)
+        : (() => {
+            mediaSession = createMediaUploadSession(files, {
+              taskId: task.id, businessType: 'task', limit: task.imageLimit
+            }, {
+              previewContainer: document.querySelector('#taskPreview'),
+              statusElement: taskStatus
+            });
+            return mediaSession.promise;
+          })();
+      form.images.value = '';
+      taskRetry.hidden = true;
       const currentSession = mediaSession;
-      void currentSession.promise.catch((error) => {
+      void activePromise.catch((error) => {
         if (currentSession !== mediaSession) return;
         taskStatus.textContent = error.message;
         taskRetry.hidden = !currentSession.errors.size;
@@ -2280,9 +2501,9 @@ function taskSubmissionForm(task) {
       const siblingButtons = [...form.querySelectorAll('[data-intent]')].filter((item) => item !== button);
       siblingButtons.forEach((item) => { item.disabled = true; });
       try {
-        if (form.images.files.length > task.imageLimit) throw new Error(`最多上传 ${task.imageLimit} 张图片`);
-        const media = form.images.files.length ? await mediaSession?.promise : [];
-        if (form.images.files.length && (!media || media.length !== form.images.files.length)) {
+        const selectedCount = mediaSession?.selected.length || 0;
+        const media = selectedCount ? await mediaSession.promise : [];
+        if (selectedCount && (!media || media.length !== selectedCount)) {
           throw new Error('图片尚未全部就绪，请重试失败图片。');
         }
         const result = await api(`/api/tasks/${task.id}/submission`, {
@@ -2332,8 +2553,9 @@ function taskSubmissionForm(task) {
   });
 }
 
-async function inbox(page = 1) {
+async function inbox(page = 1, options = {}) {
   const pageEpoch = beginNavigation();
+  if (options.historyMode !== 'restore') recordAppRoute('inbox', { inboxPage: page });
   const result = await api(`/api/inbox?page=${page}&limit=20`);
   if (!isCurrentNavigation(pageEpoch)) return;
   app.innerHTML = `
@@ -2347,8 +2569,8 @@ async function inbox(page = 1) {
         </button>`).join('') || '<p class="muted">暂无消息</p>'}</div>
       <div class="row plaza-pager"><button class="secondary" id="prevInbox" ${page <= 1 ? 'disabled' : ''}>上一页</button><span>第 ${page} 页</span><button class="secondary" id="nextInbox" ${!result.hasMore ? 'disabled' : ''}>下一页</button></div>
     </section><div id="modalRoot"></div>`;
-  document.querySelector('#backInbox').onclick = home;
-  document.querySelector('#readAll').onclick = async () => { await api('/api/inbox', { method: 'PATCH', body: '{}' }); inbox(page); };
+  document.querySelector('#backInbox').onclick = returnToPreviousAppRoute;
+  document.querySelector('#readAll').onclick = async () => { await api('/api/inbox', { method: 'PATCH', body: '{}' }); inbox(page, { historyMode: 'replace' }); };
   document.querySelector('#prevInbox').onclick = () => inbox(page - 1);
   document.querySelector('#nextInbox').onclick = () => inbox(page + 1);
   document.querySelectorAll('[data-notice]').forEach((item) => {
@@ -2472,7 +2694,10 @@ const renderPlazaPage = (result, sort, page, month, pageEpoch, options = {}) => 
   const renderStartedAt = performance.now();
   if (!isCurrentNavigation(pageEpoch)) return;
   document.body.dataset.view = 'plaza';
-  const preservedScroll = options.preserveScroll ? window.scrollY : 0;
+  const hasRestoreScroll = Number.isFinite(options.restoreScrollY);
+  const preservedScroll = hasRestoreScroll
+    ? Math.max(0, Number(options.restoreScrollY))
+    : options.preserveScroll ? window.scrollY : 0;
   const query = String(options.query ?? result.query ?? '').trim();
   const cardMarkup = result.posts.map((post, cardIndex) => `
     <article class="plaza-card" data-post="${post.id}" data-card-index="${cardIndex}" tabindex="0" role="button" aria-label="查看活动内容">
@@ -2516,9 +2741,14 @@ const renderPlazaPage = (result, sort, page, month, pageEpoch, options = {}) => 
         <button class="${sort === 'latest' ? 'active' : ''}" data-sort="latest" type="button">最新发布</button>
         <button class="${sort === 'hot' ? 'active' : ''}" data-sort="hot" type="button">热门排行</button>
       </nav>
-      <button class="plaza-icon-button" id="togglePlazaSearch" type="button" aria-label="搜索活动内容" aria-expanded="${query ? 'true' : 'false'}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
-      </button>
+      <div class="plaza-appbar-actions">
+        <button class="plaza-icon-button" id="refreshPlaza" type="button" aria-label="刷新活动广场">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0 2 5"/><path d="M20 4v7h-7"/></svg>
+        </button>
+        <button class="plaza-icon-button" id="togglePlazaSearch" type="button" aria-label="搜索活动内容" aria-expanded="${query ? 'true' : 'false'}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+        </button>
+      </div>
     </header>
     <section class="plaza-search-panel" id="plazaSearchPanel" ${query ? '' : 'hidden'}>
       <form id="plazaSearchForm" role="search">
@@ -2548,7 +2778,20 @@ const renderPlazaPage = (result, sort, page, month, pageEpoch, options = {}) => 
   const searchPanel = document.querySelector('#plazaSearchPanel');
   const searchInput = document.querySelector('#plazaSearchInput');
   const searchToggle = document.querySelector('#togglePlazaSearch');
-  document.querySelector('#backHome').onclick = home;
+  const refreshButton = document.querySelector('#refreshPlaza');
+  document.querySelector('#backHome').onclick = returnToPreviousAppRoute;
+  refreshButton.onclick = () => {
+    if (refreshButton.disabled) return;
+    refreshButton.disabled = true;
+    refreshButton.setAttribute('aria-busy', 'true');
+    void plaza(sort, page, '', query, { forceRefresh: true, preserveScroll: true, historyMode: 'replace' })
+      .catch((error) => showToast(error.message || '活动广场刷新失败，请稍后重试。', 'error'))
+      .finally(() => {
+        if (!refreshButton.isConnected) return;
+        refreshButton.disabled = false;
+        refreshButton.removeAttribute('aria-busy');
+      });
+  };
   searchToggle.onclick = () => {
     const opening = searchPanel.hidden;
     searchPanel.hidden = !opening;
@@ -2581,53 +2824,66 @@ const renderPlazaPage = (result, sort, page, month, pageEpoch, options = {}) => 
       }
     };
   });
-  if (options.preserveScroll) requestAnimationFrame(() => window.scrollTo(0, preservedScroll));
+  if (options.preserveScroll || hasRestoreScroll) requestAnimationFrame(() => window.scrollTo(0, preservedScroll));
 };
 
-async function plaza(sort = 'latest', page = 1, month = '', query = '') {
+async function plaza(sort = 'latest', page = 1, month = '', query = '', options = {}) {
   const pageEpoch = beginNavigation();
   /* LAZY_PLAZA_ENTRY_V1 */
   void window.__LOAD_PLAZA_EXTRAS__?.();
   const safeSort = sort === 'hot' ? 'hot' : 'latest';
   const safeQuery = typeof query === 'string' ? query.trim().slice(0, 40) : '';
+  const forceRefresh = options.forceRefresh === true;
+  const preserveScroll = options.preserveScroll === true;
+  const restoreScrollY = Number.isFinite(options.restoreScrollY)
+    ? Math.max(0, Number(options.restoreScrollY))
+    : null;
+  if (options.historyMode !== 'restore') {
+    recordAppRoute('plaza', {
+      studentHome: false,
+      plazaList: true,
+      plazaDetail: false,
+      plazaSort: safeSort,
+      plazaPage: page,
+      plazaMonth: month,
+      plazaQuery: safeQuery,
+      plazaScrollY: preserveScroll ? window.scrollY : 0
+    }, { replace: options.historyMode === 'replace', url: appRouteUrl('plaza') });
+  }
   const cacheKey = scopedCacheKey('plaza', safeSort, page, safeQuery);
   const cached = readViewCache(plazaViewCache, cacheKey);
   const path = `/api/plaza?sort=${safeSort}&page=${page}&limit=20${safeQuery ? `&q=${encodeURIComponent(safeQuery)}` : ''}`;
-  if (cached) {
-    renderPlazaPage(cached.data, safeSort, page, '', pageEpoch, { query: safeQuery });
-    const refresh = async () => {
-      try {
-        const result = await api(path);
-        writeViewCache(plazaViewCache, cacheKey, result);
-        if (!isCurrentNavigation(pageEpoch)
-            || document.body.dataset.view !== 'plaza'
-            || document.querySelector('.plaza-detail')) return;
-        renderPlazaPage(result, safeSort, page, '', pageEpoch, { preserveScroll: true, query: safeQuery });
-      } catch {
-        if (!isCurrentNavigation(pageEpoch)) return;
-        const status = document.querySelector('#viewCacheStatus');
-        if (status) {
-          status.hidden = false;
-          status.textContent = '当前显示的是已缓存内容，最新数据刷新失败。';
-        }
-      }
-    };
-    if (cacheIsFresh(cached)) {
-      setTimeout(() => { void refresh(); }, 3200);
-    } else void refresh();
+  const requestPath = forceRefresh ? `${path}&_refresh=${Date.now()}` : path;
+  if (cached && !forceRefresh) {
+    renderPlazaPage(cached.data, safeSort, page, '', pageEpoch, { preserveScroll, restoreScrollY, query: safeQuery });
     return;
   }
   // Reuse the bootstrap/home prefetch instead of issuing a second D1 request when the
   // user enters Plaza immediately after the home screen becomes interactive.
-  const firstPagePromise = safeSort === 'latest' && page === 1 && !safeQuery
+  if (cached) {
+    renderPlazaPage(cached.data, safeSort, page, '', pageEpoch, { preserveScroll, restoreScrollY, query: safeQuery });
+  }
+  const firstPagePromise = !forceRefresh && safeSort === 'latest' && page === 1 && !safeQuery
     ? (studentPlazaPrefetchPromise || prefetchStudentPlaza())
     : null;
   const preloadedResult = firstPagePromise
     ? await Promise.resolve(firstPagePromise).catch(() => null)
     : null;
-  const result = preloadedResult || await api(path);
+  let result;
+  try {
+    result = preloadedResult || await api(requestPath);
+  } catch (error) {
+    if (!cached || !isCurrentNavigation(pageEpoch)) throw error;
+    const status = document.querySelector('#viewCacheStatus');
+    if (status) {
+      status.hidden = false;
+      status.textContent = '刷新失败，当前仍显示已缓存内容。';
+    }
+    return;
+  }
   writeViewCache(plazaViewCache, cacheKey, result);
-  renderPlazaPage(result, safeSort, page, '', pageEpoch, { query: safeQuery });
+  renderPlazaPage(result, safeSort, page, '', pageEpoch, { preserveScroll, restoreScrollY, query: safeQuery });
+  if (forceRefresh && isCurrentNavigation(pageEpoch)) showToast('活动广场已刷新。');
 }
 
 function rankingTable(items, metric, label) {
@@ -2664,7 +2920,7 @@ const renderRankingsPage = (result, period, key, pageEpoch, options = {}) => {
     duration: roundedDuration(renderStartedAt),
     navigationEpoch: pageEpoch
   });
-  document.querySelector('#backRanking').onclick = home;
+  document.querySelector('#backRanking').onclick = returnToPreviousAppRoute;
   document.querySelectorAll('[data-period]').forEach((button) => { button.onclick = () => rankings(button.dataset.period); });
   document.querySelector('#rankingKey').onchange = (event) => rankings(period, event.target.value);
   const freeze = document.querySelector('#freezeRanking');
@@ -2687,7 +2943,7 @@ const renderRankingsPage = (result, period, key, pageEpoch, options = {}) => {
   if (options.preserveScroll) requestAnimationFrame(() => window.scrollTo(0, preservedScroll));
 };
 
-async function rankings(period = 'day', key = '') {
+async function rankings(period = 'day', key = '', options = {}) {
   const pageEpoch = beginNavigation();
   const currentKey = key || (period === 'month'
     ? new Date().toLocaleDateString('en-CA', {
@@ -2695,6 +2951,9 @@ async function rankings(period = 'day', key = '') {
     }).slice(0, 7)
     : new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' }));
   const cacheKey = scopedCacheKey('ranking', period, currentKey);
+  if (options.historyMode !== 'restore') {
+    recordAppRoute('rankings', { rankingPeriod: period, rankingKey: currentKey }, { replace: options.historyMode === 'replace' });
+  }
   const cached = readViewCache(rankingViewCache, cacheKey);
   const path = `/api/rankings?period=${period}&key=${encodeURIComponent(currentKey)}`;
   if (cached) {
@@ -2724,30 +2983,118 @@ async function rankings(period = 'day', key = '') {
 }
 
 /* CHECKIN_WINDOW_UPLOAD_PLAZA_PAGE_V1 */
+const findPlazaCard = (postId) => [...document.querySelectorAll('[data-post]')]
+  .find((card) => card.dataset.post === postId) || null;
+const restorePlazaAnchorPosition = (state) => {
+  const anchorPost = typeof state?.plazaAnchorPost === 'string' ? state.plazaAnchorPost : '';
+  const anchorOffset = Number(state?.plazaAnchorOffset);
+  if (!anchorPost || !Number.isFinite(anchorOffset)) return;
+  const maxFrames = 90;
+  let frame = 0;
+  let stableFrames = 0;
+  const correctAnchor = () => {
+    frame += 1;
+    if (frame === 1 || frame % 8 === 0) window.schedulePlazaMasonryLayout?.();
+    const card = findPlazaCard(anchorPost);
+    if (card) {
+      const offsetDelta = card.getBoundingClientRect().top - anchorOffset;
+      if (Math.abs(offsetDelta) > 1) {
+        window.scrollTo(0, Math.max(0, window.scrollY + offsetDelta));
+        stableFrames = 0;
+      } else {
+        stableFrames += 1;
+      }
+    }
+    if (frame < maxFrames && stableFrames < 3) requestAnimationFrame(correctAnchor);
+  };
+  requestAnimationFrame(correctAnchor);
+};
 const restorePlazaListFromHistory = (state) => {
   if (!state?.plazaList) return false;
+  lastPlazaListState = state;
   document.body.dataset.view = 'plaza';
   const scrollY = Math.max(0, Number(state.plazaScrollY || 0));
   const query = typeof state.plazaQuery === 'string' ? state.plazaQuery : '';
-  void plaza(state.plazaSort || 'latest', Math.max(1, Number(state.plazaPage || 1)), state.plazaMonth || '', query)
-    .then(() => requestAnimationFrame(() => window.scrollTo(0, scrollY)))
+  void plaza(state.plazaSort || 'latest', Math.max(1, Number(state.plazaPage || 1)), state.plazaMonth || '', query, { historyMode: 'restore', preserveScroll: true, restoreScrollY: scrollY })
+    .then(() => restorePlazaAnchorPosition(state))
     .catch((error) => { showToast(error.message || '活动广场加载失败', 'error'); });
   return true;
 };
-window.addEventListener('popstate', (event) => {
-  if (document.body.dataset.view === 'plaza-detail' && event.state?.plazaList) restorePlazaListFromHistory(event.state);
-});
 
-async function openPlazaPost(postId, sort, page, month, countView = true, query = '') {
-  const root = app;
-  const listUrl = new URL(location.href);
+const findHistoryTask = (taskId) => [
+  ...(studentViewState.data?.tasks || []),
+  ...(studentViewState.data?.materialTasks || [])
+].find((task) => task.id === taskId);
+restoreAppRoute = (state) => {
+  if (!state?.appRoute || user?.role !== 'student') return false;
+  if (state.appRoute === 'plaza') {
+    if (closePlazaDetailLayer()) return true;
+    if (restorePlazaListFromHistory(state)) return true;
+  }
+  if (state.appRoute === 'plaza-detail' && state.plazaPost) {
+    void openPlazaPost(
+      state.plazaPost,
+      state.plazaSort || 'latest',
+      Math.max(1, Number(state.plazaPage || 1)),
+      state.plazaMonth || '',
+      false,
+      typeof state.plazaQuery === 'string' ? state.plazaQuery : '',
+      { historyMode: 'restore' }
+    ).catch((error) => showToast(error.message || '作品加载失败，请稍后重试。', 'error'));
+    return true;
+  }
+  if (state.appRoute === 'home') {
+    void home({ historyMode: 'restore' });
+    return true;
+  }
+  if (state.appRoute === 'inbox') {
+    void inbox(Math.max(1, Number(state.inboxPage || 1)), { historyMode: 'restore' })
+      .catch((error) => showToast(error.message || '消息加载失败，请稍后重试。', 'error'));
+    return true;
+  }
+  if (state.appRoute === 'rankings') {
+    void rankings(state.rankingPeriod || 'day', state.rankingKey || '', { historyMode: 'restore' })
+      .catch((error) => showToast(error.message || '排行榜加载失败，请稍后重试。', 'error'));
+    return true;
+  }
+  if (state.appRoute === 'checkin' && state.slotId) {
+    checkinForm(state.slotId, { historyMode: 'restore' });
+    return true;
+  }
+  if (['member-checkin', 'material-submission', 'task-submission'].includes(state.appRoute)) {
+    const task = findHistoryTask(state.taskId);
+    if (!task) {
+      void home({ historyMode: 'restore' });
+      showToast('页面已更新，已返回首页。', 'warning');
+      return true;
+    }
+    if (state.appRoute === 'member-checkin') memberCheckinForm(task, { historyMode: 'restore' });
+    else if (state.appRoute === 'material-submission') materialSubmissionForm(task, { historyMode: 'restore' });
+    else taskSubmissionForm(task, { historyMode: 'restore' });
+    return true;
+  }
+  return false;
+};
+async function openPlazaPost(postId, sort, page, month, countView = true, query = '', options = {}) {
+  closePlazaDetailLayer();
+  const root = document.createElement('section');
+  root.className = 'plaza-detail-layer';
+  root.setAttribute('aria-label', '活动作品详情');
+  document.body.append(root);
+  activePlazaDetailLayer = root;
+  const listUrl = appRouteUrl('plaza');
   listUrl.searchParams.delete('plazaPost');
   const plazaScrollY = window.scrollY;
-  const listState = { ...(history.state || {}), plazaList: true, plazaDetail: false, plazaSort: sort, plazaPage: page, plazaMonth: month, plazaQuery: typeof query === 'string' ? query : '', plazaScrollY };
-  history.replaceState(listState, '', listUrl);
-  const detailUrl = new URL(listUrl);
-  detailUrl.searchParams.set('plazaPost', postId);
-  history.pushState({ ...listState, plazaList: false, plazaDetail: true, plazaPost: postId }, '', detailUrl);
+  const anchorCard = findPlazaCard(postId);
+  const plazaAnchorOffset = Number(anchorCard?.getBoundingClientRect().top);
+  const listState = { ...(history.state || {}), appRoute: 'plaza', studentHome: false, plazaList: true, plazaDetail: false, plazaSort: sort, plazaPage: page, plazaMonth: month, plazaQuery: typeof query === 'string' ? query : '', plazaScrollY, plazaAnchorPost: postId, plazaAnchorOffset: Number.isFinite(plazaAnchorOffset) ? plazaAnchorOffset : null };
+  lastPlazaListState = listState;
+  if (options.historyMode !== 'restore') {
+    history.replaceState(listState, '', listUrl);
+    const detailUrl = appRouteUrl('plaza-detail', postId);
+    if (!isAndroidQQWebView()) detailUrl.searchParams.set('plazaPost', postId);
+    history.pushState({ ...listState, appRoute: 'plaza-detail', plazaList: false, plazaDetail: true, plazaPost: postId }, '', detailUrl);
+  }
   document.body.dataset.view = 'plaza-detail';
   const modalEpoch = ++plazaModalEpoch;
   const detailStartedAt = performance.now();
@@ -2773,10 +3120,33 @@ async function openPlazaPost(postId, sort, page, month, countView = true, query 
   </section>`;
 
   const closePost = () => {
-    if (modalEpoch !== plazaModalEpoch) return;
     plazaModalEpoch += 1;
-    history.back();
+    const currentState = history.state;
+    if (currentState?.appRoute === 'plaza-detail' && currentState.plazaPost === postId && history.length > 1) {
+      history.back();
+      window.setTimeout(() => {
+        if (!activePlazaDetailLayer || document.body.dataset.view !== 'plaza-detail') return;
+        const fallbackState = lastPlazaListState || listState;
+        history.replaceState(fallbackState, '', listUrl);
+        closePlazaDetailLayer();
+      }, 180);
+      return;
+    }
+    history.replaceState(listState, '', listUrl);
+    closePlazaDetailLayer();
   };
+  root.addEventListener('click', (event) => {
+    const trigger = event.target.closest('[data-image-viewer]');
+    if (!trigger) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openImageViewer(
+      trigger.dataset.imageThumb || trigger.dataset.imageViewer,
+      trigger.dataset.imageDisplay || trigger.dataset.imageViewer,
+      trigger.dataset.imageAlt || '查看图片',
+      trigger.querySelector('img')
+    );
+  });
   prepareDynamicContent(root);
   root.querySelector('#closePost').onclick = closePost;
   if (previewPost) recordPerf('plaza-detail-preview-visible', { duration: roundedDuration(detailStartedAt), postId });
@@ -2796,6 +3166,7 @@ async function openPlazaPost(postId, sort, page, month, countView = true, query 
   }
   if (modalEpoch !== plazaModalEpoch) return;
 
+  const detailImmediateImageCount = Math.min(3, post.images.length);
   root.innerHTML = `<section class="card plaza-detail plaza-detail-page">
     <div class="row"><div><span class="eyebrow dark">${escapeHtml(post.taskName)}</span><h2>${escapeHtml(post.teamName)}</h2></div><button class="secondary right" id="closePost">返回</button></div>
     <p class="muted">成员：${post.members.map((member) => `${escapeHtml(member.name)}（${escapeHtml(member.campus)}）`).join('、')}</p>
@@ -2804,19 +3175,19 @@ async function openPlazaPost(postId, sort, page, month, countView = true, query 
           data-image-thumb="${escapeHtml(image.thumbUrl || image.imageUrl)}"
           data-image-display="${escapeHtml(image.displayUrl || image.imageUrl)}" data-image-alt="活动图片">
         <div class="image-shell">
-          <img data-perf-image="plaza-detail-thumb" data-priority="${imageIndex === 0 ? 'high' : 'low'}"
-            loading="${imageIndex === 0 ? 'eager' : 'lazy'}" decoding="async"
-            fetchpriority="${imageIndex === 0 ? 'high' : 'low'}" width="640" height="480"
-            ${imageIndex === 0
+          <img data-perf-image="plaza-detail-thumb" data-priority="${imageIndex < detailImmediateImageCount ? 'high' : 'low'}"
+            loading="${imageIndex < detailImmediateImageCount ? 'eager' : 'lazy'}" decoding="async"
+            fetchpriority="${imageIndex < detailImmediateImageCount ? 'high' : 'low'}" width="640" height="480"
+            ${imageIndex < detailImmediateImageCount
               ? `src="${escapeHtml(image.thumbUrl || image.imageUrl)}" srcset="${escapeHtml(image.thumbUrl || image.imageUrl)} 960w, ${escapeHtml(image.displayUrl || image.imageUrl)} 2048w" sizes="(max-width: 720px) 100vw, 720px"`
-              : `data-src="${escapeHtml(image.thumbUrl || image.imageUrl)}"`} alt="活动图片"
+              : `data-plaza-detail-image="true" data-src="${escapeHtml(image.thumbUrl || image.imageUrl)}"`} alt="活动图片"
             onload="this.parentElement.classList.add('loaded')"
             onerror="this.hidden=true;this.parentElement.classList.add('failed')">
           <span class="image-error">图片加载失败</span>
         </div>
       </button>`).join('')}</div>
     <p>${escapeHtml(post.copy)}</p>
-    <div class="row"><span class="muted">${formatDate(post.publishedAt)} · 浏览 <span data-detail-views>${post.viewCount}</span> · 今日剩余 ${post.likeQuota.remaining}/5 个赞</span><button class="right ${post.liked ? '' : 'secondary'}" id="likePost">${post.liked ? '取消点赞' : '点赞'} <span id="likeCount">${post.likeCount}</span></button></div>
+    <div class="row"><span class="muted">${formatDate(post.publishedAt)} · 浏览 <span data-detail-views>${post.viewCount}</span> · 今日剩余 <span data-like-quota>${post.likeQuota.remaining}/5</span> 个赞</span><button class="right ${post.liked ? '' : 'secondary'}" id="likePost">${post.liked ? '取消点赞' : '点赞'} <span id="likeCount">${post.likeCount}</span></button></div>
     <section class="comments-panel">
       <h3>评论 <span id="commentCount">${post.commentCount}</span></h3>
       <form id="commentForm"><textarea name="content" maxlength="500" required placeholder="写下你的评论（最多500字）"></textarea><button disabled>发布评论</button></form>
@@ -2826,18 +3197,6 @@ async function openPlazaPost(postId, sort, page, month, countView = true, query 
   </section>`;
   prepareDynamicContent(root);
   root.querySelector('#closePost').onclick = closePost;
-  const warmDisplayImages = () => {
-    post.images.slice(0, 2).forEach((image) => {
-      const displayUrl = buildMediaUrl(image.displayUrl || image.imageUrl || image.thumbUrl);
-      if (!displayUrl) return;
-      const preload = new Image();
-      preload.decoding = 'async';
-      preload.fetchPriority = 'low';
-      preload.src = displayUrl;
-    });
-  };
-  if ('requestIdleCallback' in window) requestIdleCallback(warmDisplayImages, { timeout: 1800 });
-  else setTimeout(warmDisplayImages, 1200);
   recordPerf('plaza-detail-visible', {
     duration: roundedDuration(detailStartedAt),
     cacheHit: detailCacheHit,
@@ -2919,13 +3278,20 @@ async function openPlazaPost(postId, sort, page, month, countView = true, query 
         body: JSON.stringify({ liked: !post.liked })
       });
       post.liked = result.liked;
-      if (post.liked !== previousLiked) post.likeCount += post.liked ? 1 : -1;
+      post.likeCount = Number.isFinite(Number(result.likeCount))
+        ? Number(result.likeCount)
+        : post.likeCount + (post.liked !== previousLiked ? (post.liked ? 1 : -1) : 0);
+      if (result.likeQuota && Number.isFinite(Number(result.likeQuota.remaining))) {
+        post.likeQuota = result.likeQuota;
+        const quota = root.querySelector('[data-like-quota]');
+        if (quota) quota.textContent = `${post.likeQuota.remaining}/5`;
+      }
       button.dataset.loading = 'false';
       button.disabled = false;
       button.innerHTML = `${post.liked ? '取消点赞' : '点赞'} <span id="likeCount">${post.likeCount}</span>`;
       button.classList.toggle('secondary', !post.liked);
-      patchPlazaPostCache(postId, { likeCount: post.likeCount, liked: post.liked });
-      updatePlazaCachePost(postId, { likeCount: post.likeCount, liked: post.liked });
+      patchPlazaPostCache(postId, { likeCount: post.likeCount, liked: post.liked, likeQuota: post.likeQuota });
+      updatePlazaCachePost(postId, { likeCount: post.likeCount, liked: post.liked, likeQuota: post.likeQuota });
       updateVisiblePlazaCard(postId, { likeCount: post.likeCount });
       rankingViewCache.clear();
     } catch (error) {
@@ -3010,7 +3376,9 @@ async function openPlazaPost(postId, sort, page, month, countView = true, query 
 }
 
 function checkinForm(slotId) {
+  const options = arguments[1] || {};
   beginNavigation();
+  if (options.historyMode !== 'restore') recordAppRoute('checkin', { slotId });
   const slot = config.slots.find((item) => item.id === slotId);
   app.innerHTML = `
     <header class="hero"><h1>${escapeHtml(slot.label)}打卡</h1><p>${slot.start}–${slot.end}，请上传水印相机截图。</p></header>
@@ -3022,7 +3390,7 @@ function checkinForm(slotId) {
         <div class="row"><button type="button" class="secondary" id="back">返回</button><button>上传并提交</button></div>
       </form>
     </section>`;
-  document.querySelector('#back').onclick = home;
+  document.querySelector('#back').onclick = returnToPreviousAppRoute;
   document.querySelector('#send').onsubmit = async (event) => {
     event.preventDefault();
     const form = event.target;
@@ -3057,13 +3425,14 @@ function checkinForm(slotId) {
 
 /* ADMIN_CLIENT_LAZY_LOADER_V1 */
 let adminClientModulePromise = null;
+const ADMIN_CLIENT_ASSET_REVISION = 'admin-backend-20260822-repair1';
 const loadAdminClient = (selectedDate, pageEpoch) => {
   if (user?.role !== 'admin') return Promise.resolve(false);
   if (!adminClientModulePromise) {
     const appScript = [...document.scripts].find((script) => new URL(script.src || location.href, location.href).pathname === '/app.js');
     const version = appScript ? new URL(appScript.src, location.href).searchParams.get('v') : '';
-    const url = new URL('/admin-client.js', location.origin);
-    if (version) url.searchParams.set('v', version);
+    const url = new URL('/admin-client-54b75e54369858903ecb583288948e6daf05d51c.js', location.origin);
+    if (version) url.searchParams.set('v', version + '-admin-backend-20260822-repair1');
     adminClientModulePromise = new Promise((resolve, reject) => {
       const existing = document.querySelector('script[data-admin-client]');
       if (existing?.dataset.loaded === 'true') return resolve();

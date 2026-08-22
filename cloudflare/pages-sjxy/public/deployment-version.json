@@ -1,9 +1,7 @@
 {
-  "commit": "977087b14abe9f891f62b184b59023a214f08191",
-  "runId": "31719456899",
-  "runAttempt": "1",
-  "assetVersion": "977087b14abe9f891f62b184b59023a214f08191",
-  "environment": "production-parallel-entry",
-  "entry": "sjxy",
-  "generatedAt": "2026-08-13T16:13:36.193Z"
+  "commit": "54b75e54369858903ecb583288948e6daf05d51c",
+  "assetVersion": "54b75e54369858903ecb583288948e6daf05d51c",
+  "releaseId": "local-54b75e54369858903ecb583288948e6daf05d51c",
+  "environment": "production",
+  "generatedAt": "2026-08-22T14:44:33.000Z"
 }
