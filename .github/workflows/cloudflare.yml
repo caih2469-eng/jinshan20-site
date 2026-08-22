@@ -242,6 +242,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment: cloudflare-production
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -263,7 +264,7 @@ jobs:
       - name: Deploy the tested sjxy static release
         uses: cloudflare/wrangler-action@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          apiToken: ${{ secrets.JINSAN }}
           accountId: 8e407a883864331f21147c1a26813fb5
           workingDirectory: cloudflare/pages-sjxy
           command: pages deploy public --project-name sjxy --branch main --commit-hash ${{ github.sha }} --commit-dirty true
