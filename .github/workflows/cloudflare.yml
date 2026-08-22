@@ -16,6 +16,7 @@ on:
         options:
           - test
           - production
+          - sjxy
 
 permissions:
   contents: read
@@ -233,6 +234,56 @@ jobs:
           name: browser-plaza-mobile-preview-${{ github.run_id }}
           path: reports/browser-plaza-mobile-preview.json
           retention-days: 14
+
+  deploy-sjxy:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.environment == 'sjxy'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: cloudflare-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify the tested sjxy static release
+        shell: bash
+        run: |
+          set -euo pipefail
+          fingerprint='54b75e54369858903ecb583288948e6daf05d51c'
+          public='cloudflare/pages-sjxy/public'
+          node --check "$public/app.js"
+          node --check "$public/admin-client.js"
+          node --check "$public/bootstrap.js"
+          test -f "$public/admin-client-$fingerprint.js"
+          cmp "$public/admin-client.js" "$public/admin-client-$fingerprint.js"
+          grep -Fq "/admin-client-$fingerprint.js" "$public/app.js"
+          grep -Fq "$fingerprint" "$public/deployment-version.json"
+      - name: Deploy the tested sjxy static release
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: cloudflare/pages-sjxy
+          command: pages deploy public --project-name sjxy --branch main --commit-hash ${{ github.sha }} --commit-dirty true
+      - name: Verify sjxy serves the tested fingerprint
+        shell: bash
+        run: |
+          set -euo pipefail
+          fingerprint='54b75e54369858903ecb583288948e6daf05d51c'
+          url="https://sjxy.pages.dev/deployment-version.json?run=${GITHUB_RUN_ID}&attempt=${GITHUB_RUN_ATTEMPT}"
+          for attempt in $(seq 1 30); do
+            body="$(curl -fsS --connect-timeout 8 --max-time 15 -H 'Cache-Control: no-cache' "$url" || true)"
+            if grep -Fq "$fingerprint" <<<"$body"; then
+              printf '%s\n' "$body"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo 'sjxy did not serve the tested fingerprint in time.'
+          exit 1
 
   deploy-production:
     if: >-
